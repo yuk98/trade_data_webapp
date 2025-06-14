@@ -30,7 +30,7 @@ class Dashboard:
         st.session_state.selected_country = '총합'
         st.session_state.is_12m_trailing = True
         st.session_state.show_yoy_growth = False
-        st.session_state.selected_period = '10년'  # 버튼 상태 관리를 위해 추가
+        st.session_state.selected_period = '10년'
         st.session_state.init_done = True
 
     @st.cache_data
@@ -132,6 +132,38 @@ class Dashboard:
 
         st.altair_chart(final_chart, use_container_width=True)
 
+    def _render_controls(self, min_date: datetime, max_date: datetime):
+        """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
+        with st.expander("⚙️ 데이터 보기 및 기간 설정", expanded=True):
+            cols = st.columns([1, 1, 2])
+            with cols[0]:
+                st.selectbox('**국가 선택**', COUNTRY_OPTIONS, key='selected_country')
+            with cols[1]:
+                st.radio('**형태 (무역)**', ['월별', '12개월 누적'], index=1 if st.session_state.is_12m_trailing else 0, key='data_form', horizontal=True)
+            with cols[2]:
+                st.radio('**단위 (무역)**', ['금액', 'YoY'], index=1 if st.session_state.show_yoy_growth else 0, key='unit_form', horizontal=True)
+
+            st.session_state.is_12m_trailing = (st.session_state.data_form == '12개월 누적')
+            st.session_state.show_yoy_growth = (st.session_state.unit_form == 'YoY')
+            
+            st.divider()
+
+            period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체': 99}
+            period_cols = st.columns(len(period_options))
+            
+            for i, (label, years) in enumerate(period_options.items()):
+                with period_cols[i]:
+                    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
+                    if st.button(label, key=f"period_btn_{label}", use_container_width=True, type=btn_type):
+                        st.session_state.end_date_input = max_date.date()
+                        st.session_state.start_date_input = (max_date - pd.DateOffset(years=years)).date() if label != '전체' else min_date.date()
+                        st.session_state.selected_period = label
+                        st.rerun()
+
+            date_cols = st.columns(2)
+            date_cols[0].date_input("시작일", key="start_date_input", on_change=lambda: st.session_state.update(selected_period=None))
+            date_cols[1].date_input("종료일", key="end_date_input", on_change=lambda: st.session_state.update(selected_period=None))
+
     def run(self):
         """대시보드 애플리케이션을 실행합니다."""
         with st.spinner('데이터를 불러오는 중입니다...'):
@@ -145,21 +177,15 @@ class Dashboard:
         full_display_df = pd.merge(trade_data, kospi_data, on='Date', how='outer').sort_values(by='Date')
         min_date, max_date = full_display_df['Date'].min(), full_display_df['Date'].max()
 
-        # 세션 상태에 날짜 값이 없으면 초기화
         if 'start_date_input' not in st.session_state:
-            st.session_state.start_date_input = max_date.date() - pd.DateOffset(years=10)
+            st.session_state.start_date_input = (max_date - pd.DateOffset(years=10)).date()
         if 'end_date_input' not in st.session_state:
             st.session_state.end_date_input = max_date.date()
 
-        # 위젯 값 가져오기
-        start_date = st.session_state.start_date_input
-        end_date = st.session_state.end_date_input
-
-        # 선택된 값으로 데이터 필터링
         country_df = full_display_df[full_display_df['country_name'] == st.session_state.selected_country].copy()
         display_df_filtered = country_df[
-            (country_df['Date'] >= pd.to_datetime(start_date)) & 
-            (country_df['Date'] <= pd.to_datetime(end_date))
+            (country_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
+            (country_df['Date'] <= pd.to_datetime(st.session_state.end_date_input))
         ]
         
         self._render_header_and_metrics(display_df_filtered)
@@ -169,42 +195,7 @@ class Dashboard:
         else:
             self._render_charts(display_df_filtered)
 
-        # --- [수정] 컨트롤 패널 위치를 하단으로 이동 ---
-        with st.expander("⚙️ 데이터 보기 및 기간 설정", expanded=True):
-            cols = st.columns([1, 1, 2])
-            with cols[0]:
-                st.selectbox('**국가 선택**', COUNTRY_OPTIONS, key='selected_country')
-            with cols[1]:
-                st.radio('**형태 (무역)**', ['월별', '12개월 누적'], index=1 if st.session_state.get('is_12m_trailing', True) else 0, key='data_form', horizontal=True)
-            with cols[2]:
-                st.radio('**단위 (무역)**', ['금액', 'YoY'], index=1 if st.session_state.get('show_yoy_growth', False) else 0, key='unit_form', horizontal=True)
-
-            st.divider()
-
-            # --- [수정] 기간 단축 버튼 추가 ---
-            period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체': 99}
-            period_cols = st.columns(len(period_options))
-            
-            for i, (label, years) in enumerate(period_options.items()):
-                with period_cols[i]:
-                    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
-                    if st.button(label, key=f"period_btn_{label}", use_container_width=True, type=btn_type):
-                        st.session_state.end_date_input = max_date.date()
-                        if label == '전체':
-                            st.session_state.start_date_input = min_date.date()
-                        else:
-                            st.session_state.start_date_input = max_date.date() - pd.DateOffset(years=years)
-                        st.session_state.selected_period = label
-                        st.rerun()
-
-            # --- 기간 선택 UI (달력) ---
-            date_cols = st.columns(2)
-            date_cols[0].date_input("시작일", key="start_date_input", on_change=lambda: st.session_state.update(selected_period=None))
-            date_cols[1].date_input("종료일", key="end_date_input", on_change=lambda: st.session_state.update(selected_period=None))
-
-            # --- 컨트롤 값에 따라 세션 상태 업데이트 ---
-            st.session_state.is_12m_trailing = (st.session_state.data_form == '12개월 누적')
-            st.session_state.show_yoy_growth = (st.session_state.unit_form == 'YoY')
+        self._render_controls(min_date, max_date)
 
         st.info("""
         **💡 차트 사용법**
