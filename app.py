@@ -112,8 +112,12 @@ if not display_df.empty:
     kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(y='kospi_price:Q').transform_filter(nearest_selection)
     
-    # [수정] 차트 제목을 개별적으로 설정하여 고정
-    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer).properties(
+    # [수정] transform_filter(zoom)을 추가하여 Y축이 동적으로 반응하도록 합니다.
+    kospi_chart = alt.layer(
+        kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer
+    ).transform_filter(
+        zoom
+    ).properties(
         height=120, 
         title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
     )
@@ -154,7 +158,6 @@ if not display_df.empty:
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     
-    # [수정] 차트 제목을 개별적으로 설정하여 고정
     trade_chart = alt.layer(
         trade_line, trade_area, trade_rule, trade_points, tooltip_layer
     ).properties(
@@ -164,9 +167,8 @@ if not display_df.empty:
         y='independent'
     )
 
-    # [수정] 차트 간 간격을 늘려 겹침 문제 해결 (spacing=40)
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, spacing=40, bounds='flush'
+        kospi_chart, trade_chart, spacing=50, bounds='flush', align='all'
     ).add_params(
         zoom
     ).resolve_legend(
@@ -205,7 +207,7 @@ with control_cols[2]:
         st.rerun()
 
 st.info("""
-**💡 차트 사용법**
+**� 차트 사용법**
 - **확대/축소 (Zoom)**: 차트 위에 마우스 커서를 놓고 **마우스 휠**을 위/아래로 움직여 보세요.
 - **이동 (Pan)**: 차트를 **클릭 후 드래그**하여 원하는 구간으로 이동할 수 있습니다.
 - **초기화**: 차트 아무 곳이나 **더블 클릭**하면 전체 기간으로 돌아갑니다.
@@ -216,6 +218,7 @@ st.markdown("---")
 with st.container(border=True):
     st.subheader("데이터 출처 정보")
     st.markdown("""
-    - **수출입 데이터**: `trade_data.csv` (원본: [관세청 수출입 실적](https://www.data.go.kr/data/15101612/openapi.do))
+    - **수출입 데이터**: `trade_data.csv` (원본: [관세청 수출입 실적](https://www.data.go.kr/data/15101211/openapi.do))
     - **KOSPI 200 데이터**: `yfinance` (원본: **Yahoo Finance**)
     """)
+�
