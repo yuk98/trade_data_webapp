@@ -36,34 +36,19 @@ if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
     st.session_state.is_12m_trailing = True
     st.session_state.show_yoy_growth = False
-    
-    # [모바일] 기간 선택 버튼을 위한 세션 상태
-    st.session_state.selected_period = '10년'
-    end_date_default = trade_data_processed['Date'].max()
-    start_date_default = end_date_default - pd.DateOffset(years=10)
-    st.session_state.start_date = start_date_default
-    st.session_state.end_date = end_date_default
-
     st.session_state.init_done = True
 
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
 
 # --- 데이터 필터링 및 통합 ---
-# [모바일] 기간 선택 버튼에 따라 데이터를 필터링
+# [수정] 기간 필터링 로직 제거. 이제 탐색기 차트로 제어하므로 항상 전체 데이터를 사용.
 trade_filtered_df = trade_data_processed[
-    (trade_data_processed['country_name'] == st.session_state.selected_country) &
-    (trade_data_processed['Date'] >= st.session_state.start_date) &
-    (trade_data_processed['Date'] <= st.session_state.end_date)
+    (trade_data_processed['country_name'] == st.session_state.selected_country)
 ].copy()
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
 
-kospi_filtered_df = kospi_data_processed[
-    (kospi_data_processed['Date'] >= st.session_state.start_date) &
-    (kospi_data_processed['Date'] <= st.session_state.end_date)
-].copy()
-
 display_df = pd.merge(
-    trade_filtered_df, kospi_filtered_df, on='Date', how='outer'
+    trade_filtered_df, kospi_data_processed, on='Date', how='outer'
 ).sort_values(by='Date').reset_index(drop=True)
 
 
@@ -104,9 +89,9 @@ if not display_df.empty:
 
 # --- 차트 생성 ---
 if not display_df.empty:
-    # [모바일] 터치(클릭)에 반응하는 선택 도구로 변경
-    nearest_selection = alt.selection_point(encodings=['x'], nearest=True, empty=False)
-
+    # [수정] 기간 선택을 위한 '브러시' 생성
+    brush = alt.selection_interval(encodings=['x'])
+    
     base_col_names = ['export_amount', 'import_amount', 'trade_balance']
     if st.session_state.is_12m_trailing:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_trailing_12m_yoy_growth' for c in base_col_names]
@@ -115,6 +100,8 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
+
+    nearest_selection = alt.selection_point(encodings=['x'], nearest=True, empty=False)
 
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
@@ -135,11 +122,14 @@ if not display_df.empty:
     kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(y='kospi_price:Q').transform_filter(nearest_selection)
 
+    # [수정] 메인 KOSPI 차트는 브러시 영역에 따라 필터링됨
     kospi_chart = alt.layer(
         kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer
     ).properties(
         height=120,
         title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
+    ).transform_filter(
+        brush
     )
 
     trade_melted_df = display_df.dropna(subset=cols_to_use).melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
@@ -160,7 +150,6 @@ if not display_df.empty:
         y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
-
     trade_base_chart = alt.Chart(trade_melted_df)
 
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
@@ -178,6 +167,7 @@ if not display_df.empty:
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
 
+    # [수정] 메인 무역 차트도 브러시 영역에 따라 필터링됨
     trade_chart = alt.layer(
         trade_line, trade_area, trade_rule, trade_points, tooltip_layer
     ).properties(
@@ -185,14 +175,26 @@ if not display_df.empty:
         title=alt.TitleParams(text=f"{st.session_state.selected_country} 무역 데이터", anchor="start", fontSize=16)
     ).resolve_scale(
         y='independent'
+    ).transform_filter(
+        brush
     )
 
+    # [수정] 기간 선택을 제어하는 '탐색기' 차트 생성
+    overview_chart = alt.Chart(display_df.dropna(subset=['kospi_price'])).mark_line(color='gray').encode(
+        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y')),
+        y=alt.Y('kospi_price:Q', title=None, axis=None)
+    ).properties(
+        height=70,
+        title="전체 기간 탐색기"
+    ).add_params(brush)
+
+
+    # [수정] 메인 차트들과 탐색기 차트를 수직으로 결합
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, spacing=50, bounds='flush'
+        kospi_chart, trade_chart, overview_chart, spacing=15, bounds='flush'
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
-        x='shared',
         y='independent'
     ).configure_view(
         strokeWidth=0
@@ -201,7 +203,6 @@ if not display_df.empty:
     st.altair_chart(final_combined_chart, use_container_width=True)
 
 # --- 컨트롤 패널 UI ---
-# [모바일] 컨트롤을 expander 안에 넣어 UI를 정리합니다.
 with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
     selected_country = st.selectbox(
         '**국가 선택**', 
@@ -236,34 +237,16 @@ with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
         st.session_state.show_yoy_growth = new_show_yoy_growth
         st.rerun()
 
-# [모바일] 기간 선택 버튼 UI
-st.markdown("---")
-st.markdown('**기간 설정**')
-period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체 기간': 99}
-period_cols = st.columns(4)
-col_idx = 0
-for label, offset_years in period_options.items():
-    col = period_cols[col_idx % 4]
-    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
-    if col.button(label, key=f'period_{label}', use_container_width=True, type=btn_type):
-        end_date = trade_data_processed['Date'].max()
-        if label == '전체 기간':
-            start_date = trade_data_processed['Date'].min()
-        else:
-            start_date = end_date - pd.DateOffset(years=offset_years)
-        
-        st.session_state.start_date = start_date
-        st.session_state.end_date = end_date
-        st.session_state.selected_period = label
-        st.rerun()
-    col_idx += 1
+# [수정] 기간 선택 버튼 UI 제거
+# st.markdown("---")
+# ...
 
-
-# [모바일] 사용법 안내 문구 수정
+# [수정] 사용법 안내 문구 수정
 st.info("""
 **💡 차트 사용법**
-- **기간 변경**: 상단의 **기간 설정** 버튼을 눌러 원하는 기간을 선택하세요.
-- **상세 정보**: 차트 위를 터치(클릭)하면 해당 시점의 상세 데이터를 볼 수 있습니다.
+- **기간 선택 (Zoom & Pan)**: 하단의 **전체 기간 탐색기**에서 원하는 구간을 드래그하여 선택하세요.
+- **초기화**: 탐색기 바깥쪽을 클릭하거나, 메인 차트를 더블 클릭하면 전체 기간으로 돌아갑니다.
+- **상세 정보**: 메인 차트 위를 마우스 오버(데스크톱)하거나 터치(모바일)하면 상세 데이터를 볼 수 있습니다.
 """)
 
 # --- 데이터 출처 정보 ---
