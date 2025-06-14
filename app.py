@@ -12,7 +12,7 @@ st.markdown("""
 <style>
     /* 전체 폰트 및 배경 */
     body {
-        font-family: ' Pretendard', sans-serif;
+        font-family: 'Pretendard', sans-serif;
     }
 
     /* 컨트롤 패널 스타일 */
@@ -32,6 +32,7 @@ st.markdown("""
         padding: 15px;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+        height: 100%; /* 카드의 높이를 동일하게 설정 */
     }
     .metric-card h3 {
         font-size: 1.1rem;
@@ -55,18 +56,21 @@ st.markdown("""
         background-color: #e9ecef;
         border-radius: 20px;
         padding: 4px;
-        cursor: pointer;
         width: 100%;
         height: 40px; /* 고정 높이 */
     }
-    .toggle-option {
+    .toggle-container a { /* 링크 스타일 초기화 */
+        text-decoration: none;
         flex: 1;
+    }
+    .toggle-option {
         text-align: center;
         padding: 5px 0;
         border-radius: 16px;
         font-weight: 500;
         transition: all 0.3s ease-in-out;
         color: #495057;
+        cursor: pointer;
     }
     .toggle-option.active {
         background-color: #ffffff;
@@ -74,13 +78,6 @@ st.markdown("""
         font-weight: 700;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-
-    /* 기간 선택 버튼 */
-    div.stButton > button {
-        border-radius: 0.5rem;
-    }
-    /* 선택된 기간 버튼 강조 (JavaScript 필요하여 CSS만으로는 한계가 있음, st.rerun으로 유사 효과 구현) */
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,7 +87,7 @@ st.markdown("""
 def generate_country_data(start_year, end_year, country_name, base_export, base_import):
     data_list = []
     current_date = datetime(start_year, 1, 1)
-    end_date = datetime(end_year, 5, 1) # Stop at May for the end_year
+    end_date = datetime(end_year, 5, 1)
 
     while current_date <= end_date:
         growth_factor_export = 1 + (current_date.year - start_year) * 0.03 + (current_date.month / 12 * 0.01)
@@ -108,13 +105,11 @@ def generate_country_data(start_year, end_year, country_name, base_export, base_
             'country_name': country_name,
             'year_month': current_date.strftime('%Y-%m')
         })
-        # 날짜 증가 로직 수정
         if current_date.month == 12:
             current_date = datetime(current_date.year + 1, 1, 1)
         else:
             current_date = current_date.replace(month=current_date.month + 1)
     return pd.DataFrame(data_list)
-
 
 @st.cache_data
 def load_and_transform_data():
@@ -122,7 +117,6 @@ def load_and_transform_data():
     try:
         trade_df = pd.read_csv(csv_file_name)
     except FileNotFoundError:
-        st.info(f"'{csv_file_name}' 파일을 찾을 수 없어 더미 무역 데이터를 생성합니다.")
         df_total = generate_country_data(2000, 2025, '총합', 10_000_000_000, 9_000_000_000)
         df_us = generate_country_data(2000, 2025, '미국', 2_500_000_000, 2_600_000_000)
         df_china = generate_country_data(2000, 2025, '중국', 2_000_000_000, 1_800_000_000)
@@ -132,13 +126,9 @@ def load_and_transform_data():
     trade_df['year_month'] = pd.to_datetime(trade_df['year_month'])
     trade_df = trade_df.sort_values(by=['country_name', 'year_month']).reset_index(drop=True)
 
-    # 12개월 누적 및 YoY 성장률 계산
     for col in ['export_amount', 'import_amount', 'trade_balance']:
-        # 12개월 누적
         trade_df[f'{col}_trailing_12m'] = trade_df.groupby('country_name')[col].rolling(window=12, min_periods=12).sum().reset_index(level=0, drop=True)
-        # 월별 데이터 YoY
         trade_df[f'{col}_yoy_growth'] = trade_df.groupby('country_name')[col].pct_change(periods=12) * 100
-        # 12개월 누적 데이터 YoY
         trade_df[f'{col}_trailing_12m_yoy_growth'] = trade_df.groupby('country_name')[f'{col}_trailing_12m'].pct_change(periods=12) * 100
 
     trade_df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -147,31 +137,35 @@ def load_and_transform_data():
 # --- 데이터 로드 ---
 trade_data_processed = load_and_transform_data()
 
-# --- 세션 상태 초기화 ---
-if 'selected_country' not in st.session_state:
+
+# --- 세션 상태 및 URL 파라미터 처리 ---
+if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
-if 'is_12m_trailing' not in st.session_state:
     st.session_state.is_12m_trailing = False
-if 'show_yoy_growth' not in st.session_state:
     st.session_state.show_yoy_growth = False
-if 'selected_period' not in st.session_state:
     st.session_state.selected_period = '전체 기간'
-if 'start_date' not in st.session_state:
     st.session_state.start_date = trade_data_processed['year_month'].min()
-if 'end_date' not in st.session_state:
     st.session_state.end_date = trade_data_processed['year_month'].max()
+    st.session_state.init_done = True
+
+params = st.query_params
+if "toggle_12m" in params:
+    st.session_state.is_12m_trailing = params.get("toggle_12m") == "True"
+    st.query_params.clear()
+    st.rerun()
+
+if "toggle_yoy" in params:
+    st.session_state.show_yoy_growth = params.get("toggle_yoy") == "True"
+    st.query_params.clear()
+    st.rerun()
+
 
 # --- UI 레이아웃 ---
 st.title('📊 월별 무역 데이터 대시보드')
 st.markdown("국가별 월간 무역 데이터를 시각화하고 분석합니다. 아래 컨트롤 패널에서 옵션을 변경하여 데이터를 탐색해보세요.")
 
-
-# --- 컨트롤 패널 ---
-with st.container():
-    st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-    
-    # 1행: 국가 선택 및 기간 필터
-    c1, c2 = st.columns([1.5, 3.5])
+with st.container(border=True):
+    c1, c2, c3 = st.columns([1.5, 2, 2])
     with c1:
         new_country = st.selectbox(
             '**국가 선택**',
@@ -184,199 +178,137 @@ with st.container():
             st.rerun()
 
     with c2:
-        st.markdown('**기간 선택**')
-        period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체 기간': 99}
-        period_cols = st.columns(len(period_options))
-
-        for i, (label, offset_years) in enumerate(period_options.items()):
-            if period_cols[i].button(label, key=f'period_{label}', use_container_width=True):
-                st.session_state.selected_period = label
-                end_date = trade_data_processed['year_month'].max()
-                if label == '전체 기간':
-                    start_date = trade_data_processed['year_month'].min()
-                else:
-                    start_date = end_date - pd.DateOffset(years=offset_years)
-                st.session_state.start_date = start_date
-                st.session_state.end_date = end_date
-                st.rerun()
-
-    # 2행: 데이터 변환 토글
-    st.markdown('<hr style="margin: 10px 0;">', unsafe_allow_html=True)
-    c3, c4 = st.columns(2)
-    with c3:
         st.markdown('**데이터 형태**')
-        is_12m_trailing = st.session_state.is_12m_trailing
-        # HTML을 사용한 커스텀 토글
-        toggle_html_12m = f"""
-        <div class="toggle-container" onclick="this.querySelector('input').click()">
-            <input type="checkbox" style="display:none" id="toggle12m" {'checked' if is_12m_trailing else ''}>
-            <div class="toggle-option {'active' if not is_12m_trailing else ''}">월별 데이터</div>
-            <div class="toggle-option {'active' if is_12m_trailing else ''}">12개월 누적</div>
-        </div>
-        """
-        if st.checkbox('Toggle12m', value=is_12m_trailing, key='toggle_12m_cb', label_visibility="collapsed"):
-            if not st.session_state.is_12m_trailing:
-                st.session_state.is_12m_trailing = True
-                st.rerun()
-        else:
-            if st.session_state.is_12m_trailing:
-                st.session_state.is_12m_trailing = False
-                st.rerun()
-        st.markdown(toggle_html_12m, unsafe_allow_html=True)
+        is_12m = st.session_state.is_12m_trailing
+        toggle_12m_html = f"""
+        <div class="toggle-container">
+            <a href="?toggle_12m=False" target="_self"><div class="toggle-option {'active' if not is_12m else ''}">월별 데이터</div></a>
+            <a href="?toggle_12m=True" target="_self"><div class="toggle-option {'active' if is_12m else ''}">12개월 누적</div></a>
+        </div>"""
+        st.markdown(toggle_12m_html, unsafe_allow_html=True)
 
-
-    with c4:
+    with c3:
         st.markdown('**표시 단위**')
-        show_yoy_growth = st.session_state.show_yoy_growth
-        toggle_html_yoy = f"""
-        <div class="toggle-container" onclick="this.querySelector('input').click()">
-            <input type="checkbox" style="display:none" id="toggleyoy" {'checked' if show_yoy_growth else ''}>
-            <div class="toggle-option {'active' if not show_yoy_growth else ''}">금액 (백만$)</div>
-            <div class="toggle-option {'active' if show_yoy_growth else ''}">YoY 성장률 (%)</div>
-        </div>
-        """
-        if st.checkbox('ToggleYoY', value=show_yoy_growth, key='toggle_yoy_cb', label_visibility="collapsed"):
-            if not st.session_state.show_yoy_growth:
-                st.session_state.show_yoy_growth = True
-                st.rerun()
-        else:
-            if st.session_state.show_yoy_growth:
-                st.session_state.show_yoy_growth = False
-                st.rerun()
-        st.markdown(toggle_html_yoy, unsafe_allow_html=True)
-        
-    st.markdown('</div>', unsafe_allow_html=True)
+        is_yoy = st.session_state.show_yoy_growth
+        toggle_yoy_html = f"""
+        <div class="toggle-container">
+            <a href="?toggle_yoy=False" target="_self"><div class="toggle-option {'active' if not is_yoy else ''}">금액 (백만$)</div></a>
+            <a href="?toggle_yoy=True" target="_self"><div class="toggle-option {'active' if is_yoy else ''}">YoY 성장률 (%)</div></a>
+        </div>"""
+        st.markdown(toggle_yoy_html, unsafe_allow_html=True)
 
-
-# --- 데이터 필터링 ---
 filtered_df = trade_data_processed[
     (trade_data_processed['country_name'] == st.session_state.selected_country) &
     (trade_data_processed['year_month'] >= st.session_state.start_date) &
     (trade_data_processed['year_month'] <= st.session_state.end_date)
 ].copy()
 
-# --- 메트릭 카드 표시 ---
-latest_data = filtered_df.sort_values('year_month').iloc[-1]
-prev_month_data = filtered_df.sort_values('year_month').iloc[-2] if len(filtered_df) > 1 else latest_data
-
-def format_value(value):
-    return f"{value / 1_000_000:,.0f}M"
-
-def get_delta(current, previous):
-    delta = current - previous
-    delta_str = f"{delta / 1_000_000:,.0f}M"
-    color = "green" if delta >= 0 else "red"
-    symbol = "▲" if delta >= 0 else "▼"
-    return f'<span class="delta" style="color:{color};">{symbol} {delta_str} (전월 대비)</span>'
-
-m1, m2, m3 = st.columns(3)
-with m1:
-    st.markdown(f"""
-    <div class="metric-card">
-        <h3>최신 수출액 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
-        <p>{format_value(latest_data['export_amount'])}</p>
-        {get_delta(latest_data['export_amount'], prev_month_data['export_amount'])}
-    </div>
-    """, unsafe_allow_html=True)
-with m2:
-     st.markdown(f"""
-    <div class="metric-card">
-        <h3>최신 수입액 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
-        <p>{format_value(latest_data['import_amount'])}</p>
-        {get_delta(latest_data['import_amount'], prev_month_data['import_amount'])}
-    </div>
-    """, unsafe_allow_html=True)
-with m3:
-    st.markdown(f"""
-    <div class="metric-card">
-        <h3>최신 무역수지 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
-        <p>{format_value(latest_data['trade_balance'])}</p>
-        {get_delta(latest_data['trade_balance'], prev_month_data['trade_balance'])}
-    </div>
-    """, unsafe_allow_html=True)
-
-st.write("") # 여백
-
-# --- 차트 생성 ---
-# 동적 컬럼 및 타이틀 설정
-base_cols = {'export': 'export_amount', 'import': 'import_amount', 'balance': 'trade_balance'}
-y_titles = {'export': '수출', 'import': '수입', 'balance': '무역수지'}
-chart_cols = {}
-final_y_titles = {}
-
-data_type_suffix = '_trailing_12m' if st.session_state.is_12m_trailing else ''
-unit_suffix = '_yoy_growth' if st.session_state.show_yoy_growth else ''
-
-for key, val in base_cols.items():
-    chart_cols[key] = f"{val}{data_type_suffix}{unit_suffix}"
-
-for key, val in y_titles.items():
-    title = val
-    if st.session_state.is_12m_trailing:
-        title += " (12개월 누적)"
-    if st.session_state.show_yoy_growth:
-        title += " YoY 성장률 (%)"
-    else:
-        title += " (금액)"
-    final_y_titles[key] = title
-
-# 차트 생성
 if not filtered_df.empty:
-    base_chart = alt.Chart(filtered_df).encode(
+    latest_data = filtered_df.sort_values('year_month').iloc[-1]
+    prev_month_data = filtered_df.sort_values('year_month').iloc[-2] if len(filtered_df) > 1 else latest_data
+
+    def format_value(value): return f"{value / 1_000_000:,.0f}M"
+    def get_delta(current, previous):
+        delta = current - previous
+        delta_str = f"{delta / 1_000_000:,.0f}M"
+        color = "green" if delta >= 0 else "red"
+        symbol = "▲" if delta >= 0 else "▼"
+        return f'<span class="delta" style="color:{color};">{symbol} {delta_str} (전월 대비)</span>'
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(f"""<div class="metric-card">
+            <h3>최신 수출액 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
+            <p>{format_value(latest_data['export_amount'])}</p>
+            {get_delta(latest_data['export_amount'], prev_month_data['export_amount'])}
+        </div>""", unsafe_allow_html=True)
+    with m2:
+         st.markdown(f"""<div class="metric-card">
+            <h3>최신 수입액 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
+            <p>{format_value(latest_data['import_amount'])}</p>
+            {get_delta(latest_data['import_amount'], prev_month_data['import_amount'])}
+        </div>""", unsafe_allow_html=True)
+    with m3:
+        st.markdown(f"""<div class="metric-card">
+            <h3>최신 무역수지 ({latest_data['year_month'].strftime('%Y-%m')})</h3>
+            <p>{format_value(latest_data['trade_balance'])}</p>
+            {get_delta(latest_data['trade_balance'], prev_month_data['trade_balance'])}
+        </div>""", unsafe_allow_html=True)
+
+st.write("")
+
+if not filtered_df.empty:
+    data_type_suffix = '_trailing_12m' if st.session_state.is_12m_trailing else ''
+    unit_suffix = '_yoy_growth' if st.session_state.show_yoy_growth else ''
+
+    export_col = f'export_amount{data_type_suffix}{unit_suffix}'
+    import_col = f'import_amount{data_type_suffix}{unit_suffix}'
+    balance_col = f'trade_balance{data_type_suffix}{unit_suffix}'
+
+    y_title_trade = "금액" if not st.session_state.show_yoy_growth else "YoY 성장률 (%)"
+    if st.session_state.is_12m_trailing:
+        y_title_trade = f"12개월 누적 {y_title_trade}"
+    y_title_balance = "무역수지 " + y_title_trade
+
+    trade_melted_df = filtered_df.melt(
+        id_vars=['year_month'], value_vars=[export_col, import_col],
+        var_name='지표', value_name='금액'
+    )
+    trade_melted_df['지표'] = trade_melted_df['지표'].map({export_col: '수출', import_col: '수입'})
+
+    line_chart = alt.Chart(trade_melted_df).mark_line(strokeWidth=2.5).encode(
         x=alt.X('year_month:T', title='연-월', axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
-    ).properties(
-         height=400
+        y=alt.Y('금액:Q', title=y_title_trade),
+        color=alt.Color('지표:N',
+                        scale=alt.Scale(domain=['수출', '수입'], range=['#0d6efd', '#dc3545']),
+                        legend=alt.Legend(title="구분", orient="top-left")),
+        tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip('지표:N', title='구분'),
+                 alt.Tooltip('금액:Q', title=y_title_trade, format=',.2f')]
     )
 
-    chart_export = base_chart.mark_line(color='#0d6efd', strokeWidth=2.5, point=alt.OverlayMarkDef(color="#0d6efd", size=40, filled=True, fillOpacity=0.1)).encode(
-        y=alt.Y(chart_cols['export'], title=final_y_titles['export'], axis=alt.Axis(titleColor='#0d6efd')),
-        tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip(chart_cols['export'], title=final_y_titles['export'], format=',.2f')]
+    bar_chart = alt.Chart(filtered_df).mark_bar(opacity=0.7).encode(
+        x=alt.X('year_month:T'), y=alt.Y(balance_col, title=y_title_balance),
+        color=alt.value('#198754'),
+        tooltip=[alt.Tooltip('year_month:T', title='날짜'),
+                 alt.Tooltip(balance_col, title=y_title_balance, format=',.2f')]
     )
 
-    chart_import = base_chart.mark_line(color='#dc3545', strokeWidth=2.5, point=alt.OverlayMarkDef(color="#dc3545", size=40, filled=True, fillOpacity=0.1)).encode(
-        y=alt.Y(chart_cols['import'], title=final_y_titles['import'], axis=alt.Axis(titleColor='#dc3545')),
-        tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip(chart_cols['import'], title=final_y_titles['import'], format=',.2f')]
-    )
-
-    chart_trade_balance = base_chart.mark_bar(color='#198754', opacity=0.6).encode(
-        y=alt.Y(chart_cols['balance'], title=final_y_titles['balance'], axis=alt.Axis(titleColor='#198754')),
-        tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip(chart_cols['balance'], title=final_y_titles['balance'], format=',.2f')]
-    )
-
-    # 차트 결합 및 해상도 설정
-    final_chart = alt.layer(
-        chart_export,
-        chart_import,
-        chart_trade_balance
-    ).resolve_scale(
-        y='independent'
-    ).properties(
-        title={
-            "text": f"{st.session_state.selected_country} 무역 데이터 추이",
-            "subtitle": f"기간: {st.session_state.selected_period}",
-            "fontSize": 20,
-            "subtitleFontSize": 14,
-            "anchor": "start"
-        }
+    final_chart = alt.layer(line_chart, bar_chart).resolve_scale(y='independent').properties(
+        title={"text": f"{st.session_state.selected_country} 무역 데이터 추이", "fontSize": 20, "anchor": "start"},
+        height=450
     ).interactive()
 
     st.altair_chart(final_chart, use_container_width=True)
-
 else:
     st.warning("선택된 기간에 해당하는 데이터가 없습니다. 기간을 다시 설정해주세요.")
 
+st.markdown("---")
+st.markdown('**기간 빠르게 탐색하기**')
+period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체 기간': 99}
+period_cols = st.columns(len(period_options))
 
-# --- 사용 방법 안내 ---
-with st.expander("ℹ️ 대시보드 사용 방법"):
-    st.markdown(f"""
-    - **현재 선택된 옵션**: `{st.session_state.selected_country}` | `{st.session_state.selected_period}` | `{'12개월 누적' if st.session_state.is_12m_trailing else '월별 데이터'}` | `{'YoY 성장률' if st.session_state.show_yoy_growth else '금액'}`
+for i, (label, offset_years) in enumerate(period_options.items()):
+    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
+    if period_cols[i].button(label, key=f'period_{label}', use_container_width=True, type=btn_type):
+        st.session_state.selected_period = label
+        end_date = trade_data_processed['year_month'].max()
+        if label == '전체 기간':
+            start_date = trade_data_processed['year_month'].min()
+        else:
+            start_date = end_date - pd.DateOffset(years=offset_years)
+        st.session_state.start_date = start_date
+        st.session_state.end_date = end_date
+        st.rerun()
 
-    1.  **국가/기간/데이터 형태 선택**: 상단의 컨트롤 패널에서 원하는 옵션을 선택하세요.
-    2.  **토글 스위치**: '데이터 형태'와 '표시 단위'는 클릭하여 두 가지 상태를 전환할 수 있습니다. 활성화된 옵션은 파란색 배경으로 표시됩니다.
-    3.  **핵심 지표**: 차트 위의 카드는 가장 최신 월의 수출/수입/무역수지 금액과 전월 대비 증감을 보여줍니다.
-    4.  **차트 상호작용**:
-        - **확대/축소**: 차트 위에서 마우스 휠을 사용하거나, 특정 영역을 드래그하여 확대할 수 있습니다.
-        - **이동**: 차트를 좌우로 드래그하여 기간을 이동할 수 있습니다.
-        - **초기화**: 차트를 더블 클릭하면 원래 크기로 돌아옵니다.
-        - **상세 정보**: 선이나 막대 위에 마우스를 올리면 정확한 수치를 확인할 수 있습니다.
+# --- 데이터 출처 명시 ---
+st.markdown("---")
+with st.container(border=True):
+    st.subheader("데이터 출처 정보")
+    st.markdown("""
+    본 대시보드는 공공데이터포털에서 제공하는 **관세청의 품목별 수출입 실적** OpenAPI 데이터의 구조를 참조하여 생성된 샘플 데이터를 시각화하고 있습니다.
+    실시간 데이터가 아닌, 데모용으로 생성된 더미(dummy) 데이터임을 참고해주시기 바랍니다.
+
+    - **원본 데이터**: [관세청 품목별 수출입 실적 (OpenAPI)](https://www.data.go.kr/data/15101612/openapi.do)
+    - **제공 기관**: 관세청
+    - **데이터 포털**: [공공데이터포털 (data.go.kr)](https://www.data.go.kr)
     """)
