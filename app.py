@@ -88,7 +88,7 @@ if not display_df.empty:
 
 # --- 차트 생성 ---
 if not display_df.empty:
-    # [수정] 기간 선택을 위한 '브러시' 생성
+    # 기간 선택을 위한 '브러시' 생성
     brush = alt.selection_interval(encodings=['x'])
     
     base_col_names = ['export_amount', 'import_amount', 'trade_balance']
@@ -115,7 +115,7 @@ if not display_df.empty:
 
     # KOSPI 차트의 X축은 이제 브러시에 의해 제어됩니다.
     kospi_line = alt.Chart(display_df.dropna(subset=['kospi_price'])).mark_line(color='#FF9900', strokeWidth=2).encode(
-        x=alt.X('Date:T', title=None, axis=None),
+        x=alt.X('Date:T', title=None, axis=None, scale=alt.Scale(domain=brush)),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
@@ -150,13 +150,13 @@ if not display_df.empty:
     trade_base_chart = alt.Chart(trade_melted_df)
 
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
-        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
+        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45), scale=alt.Scale(domain=brush)),
         y=alt.Y('값:Q', title=y_title_trade, axis=y_axis_config),
         color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
 
     trade_area = trade_base_chart.mark_area(opacity=0.5, clip=False, line={'color': '#198754'}).encode(
-        x=alt.X('Date:T'),
+        x=alt.X('Date:T', scale=alt.Scale(domain=brush)),
         y=alt.Y('값:Q', title=y_title_balance, axis=y_axis_config),
         color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
@@ -173,16 +173,7 @@ if not display_df.empty:
         y='independent'
     )
 
-    # [수정] 전체 차트 구조 변경: 메인차트 + 탐색기 차트
-    # 메인 차트들은 브러시 영역에 따라 필터링됩니다.
-    main_charts = alt.vconcat(
-        kospi_chart, trade_chart, spacing=15
-    ).transform_filter(
-        brush
-    )
-
     # [수정] 기간 선택을 제어하는 '탐색기' 차트 생성
-    # 무역수지를 기준으로 탐색기를 만듭니다.
     overview_chart = alt.Chart(
         display_df.dropna(subset=[balance_col])
     ).mark_area(
@@ -198,9 +189,9 @@ if not display_df.empty:
         brush
     )
 
-    # [수정] 메인 차트들과 탐색기 차트를 최종 결합
+    # [수정] 메인 차트들과 탐색기 차트를 최종 결합하는 안정적인 구조로 변경
     final_combined_chart = alt.vconcat(
-        main_charts, overview_chart, spacing=15, bounds='flush'
+        kospi_chart, trade_chart, overview_chart, spacing=15, bounds='flush'
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
@@ -214,8 +205,8 @@ if not display_df.empty:
 # --- 컨트롤 패널 UI ---
 with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
     selected_country = st.selectbox(
-        '**국가 선택**', 
-        options=['총합', '미국', '중국'], 
+        '**국가 선택**',
+        options=['총합', '미국', '중국'],
         index=['총합', '미국', '중국'].index(st.session_state.selected_country)
     )
     if selected_country != st.session_state.selected_country:
@@ -224,8 +215,8 @@ with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
 
     options_12m = ['월별', '12개월 누적']
     selected_12m = st.radio(
-        '**데이터 형태 (무역)**', 
-        options_12m, 
+        '**데이터 형태 (무역)**',
+        options_12m,
         index=1 if st.session_state.is_12m_trailing else 0,
         horizontal=True
     )
@@ -236,8 +227,8 @@ with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
 
     options_yoy = ['금액', 'YoY']
     selected_yoy = st.radio(
-        '**표시 단위 (무역)**', 
-        options_yoy, 
+        '**표시 단위 (무역)**',
+        options_yoy,
         index=1 if st.session_state.show_yoy_growth else 0,
         horizontal=True
     )
@@ -246,7 +237,6 @@ with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
         st.session_state.show_yoy_growth = new_show_yoy_growth
         st.rerun()
 
-# [수정] 사용법 안내 문구 수정
 st.info("""
 **💡 차트 사용법**
 - **기간 선택 (Zoom & Pan)**: 하단의 **전체 기간 탐색기**에서 원하는 구간을 드래그하여 선택하세요.
