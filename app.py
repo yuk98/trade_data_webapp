@@ -5,7 +5,59 @@ from datetime import datetime
 from typing import Tuple
 
 # 가정: data_handler.py는 별도의 파일로 존재하며 필요한 함수들을 포함합니다.
-import data_handler
+# 이 파일을 실행하려면 data_handler.py가 필요합니다.
+# 예시: import data_handler
+
+# --- 임시 data_handler 모듈 (실행 테스트용) ---
+# 실제 환경에서는 이 부분을 지우고 `import data_handler`를 사용하세요.
+class DataHandlerMock:
+    def load_trade_data(self):
+        # 샘플 데이터 생성
+        dates = pd.to_datetime(pd.date_range(start='2014-01-01', end='2024-05-01', freq='MS'))
+        data = []
+        for country in ['총합', '미국', '중국']:
+            for date in dates:
+                export = 1e9 * (50 + 10 * (1 + 0.5 * abs((date.month - 6.5)))) + (hash(country) % 10) * 1e8
+                imports = 1e9 * (45 + 8 * (1 + 0.4 * abs((date.month - 6.5)))) + (hash(country) % 8) * 1e8
+                
+                # 데이터에 약간의 노이즈 추가
+                export *= (1 + (pd.Timestamp.now().microsecond % 1000) / 10000 - 0.05)
+                imports *= (1 + (pd.Timestamp.now().microsecond % 1000) / 10000 - 0.05)
+                
+                data.append({
+                    'Date': date, 
+                    'country_name': country,
+                    'export_amount': export,
+                    'import_amount': imports,
+                })
+
+        df = pd.DataFrame(data)
+        df['trade_balance'] = df['export_amount'] - df['import_amount']
+        
+        # 12개월 누적 및 YoY 계산
+        for country in df['country_name'].unique():
+            country_df = df[df['country_name'] == country].sort_values('Date').copy()
+            for col in ['export_amount', 'import_amount', 'trade_balance']:
+                country_df[f'{col}_trailing_12m'] = country_df[col].rolling(window=12).sum()
+                country_df[f'{col}_yoy_growth'] = country_df[col].pct_change(periods=12) * 100
+                country_df[f'{col}_trailing_12m_yoy_growth'] = country_df[f'{col}_trailing_12m'].pct_change(periods=12) * 100
+            df.update(country_df)
+        return df
+
+    def get_and_update_kospi_data(self):
+        # 샘플 KOSPI 데이터 생성
+        dates = pd.to_datetime(pd.date_range(start='2014-01-01', end='2024-05-01', freq='MS'))
+        kospi_price = [200 + i*0.5 + 20 * (1 + 0.6 * abs((d.month - 6.5))) for i, d in enumerate(dates)]
+        kospi_df = pd.DataFrame({'Date': dates, 'Close': kospi_price})
+        return kospi_df, "KOSPI 200 데이터를 성공적으로 불러왔습니다."
+
+    def process_kospi_for_chart(self, kospi_data):
+        kospi_data['kospi_price'] = kospi_data['Close']
+        return kospi_data[['Date', 'kospi_price']]
+
+data_handler = DataHandlerMock()
+# --- 임시 data_handler 모듈 끝 ---
+
 
 # --- 상수 정의 ---
 PRIMARY_COLOR = "#0d6efd"
@@ -21,7 +73,8 @@ class Dashboard:
     """
 
     def __init__(self):
-        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
+        # 페이지 아이콘을 보다 일반적인 것으로 변경하여 렌더링 오류 가능성을 줄입니다.
+        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📊")
         if 'init_done' not in st.session_state:
             self._initialize_session_state()
 
@@ -48,7 +101,8 @@ class Dashboard:
 
     def _render_header_and_metrics(self, df: pd.DataFrame):
         """페이지 제목과 주요 메트릭 카드를 렌더링합니다."""
-        st.title('📈 무역 데이터 & KOSPI 200 대시보드')
+        # 제목에서 이모지를 제거하여 호환성을 높입니다.
+        st.title('무역 데이터 & KOSPI 200 대시보드')
         
         latest_trade_date = df.dropna(subset=['export_amount'])['Date'].max()
         if pd.isna(latest_trade_date):
@@ -90,12 +144,19 @@ class Dashboard:
         cols_to_use = [f"{col}{trailing}{growth}" for col in base_cols]
         export_col, import_col, balance_col = cols_to_use
 
+        vertical_rule = alt.Chart(df).mark_rule(color='gray', strokeDash=[3,3]).encode(
+            x='Date:T',
+            tooltip=[
+                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
+                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
+                alt.Tooltip(export_col, title="수출", format='$,.2f'),
+                alt.Tooltip(import_col, title="수입", format='$,.2f'),
+                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
+            ]
+        ).transform_filter(nearest)
+        
         base_chart = alt.Chart(df).add_params(nearest)
         
-        vertical_rule = alt.Chart(df).mark_rule(color='gray', strokeDash=[3,3]).encode(
-            x='Date:T'
-        ).transform_filter(nearest)
-
         kospi_horizontal_rule = alt.Chart(df).mark_rule(color=KOSPI_COLOR, strokeDash=[3,3]).encode(
             y=alt.Y('kospi_price:Q')
         ).transform_filter(nearest)
@@ -115,17 +176,18 @@ class Dashboard:
         col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
         trade_df['지표'] = trade_df['지표'].map(col_map)
         
-        y_axis_format = "format(datum.value / 1e9, '.0f') + 'B'" if not growth else '.0f'
-        trade_base_chart = alt.Chart(trade_df).encode(
+        y_axis_format = "format(datum.value / 1e9, '.0f') + 'B'" if not growth else "format(datum.value, '.1f') + '%'"
+        
+        trade_base_chart = alt.Chart(trade_df).add_params(nearest).encode(
             x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
             color=alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=[PRIMARY_COLOR, SECONDARY_COLOR, TERTIARY_COLOR]), legend=alt.Legend(title="구분", orient='top-left'))
         )
         
         line_chart = trade_base_chart.transform_filter(alt.datum.지표 != '무역수지').mark_line(strokeWidth=2.5).encode(
-            y=alt.Y('값:Q', title="금액 (수출입)", scale=alt.Scale(zero=False), axis=alt.Axis(labelExpr=y_axis_format))
+            y=alt.Y('값:Q', title="금액 (수출입)", scale=alt.Scale(zero=True), axis=alt.Axis(labelExpr=y_axis_format))
         )
         area_chart = trade_base_chart.transform_filter(alt.datum.지표 == '무역수지').mark_area(opacity=0.4, line={'color': TERTIARY_COLOR}).encode(
-            y=alt.Y('값:Q', title="금액 (무역수지)", scale=alt.Scale(zero=False), axis=alt.Axis(labelExpr=y_axis_format))
+            y=alt.Y('값:Q', title="금액 (무역수지)", scale=alt.Scale(zero=True), axis=alt.Axis(labelExpr=y_axis_format))
         )
         trade_points = trade_base_chart.mark_circle(size=60).encode(
             y='값:Q',
@@ -136,20 +198,10 @@ class Dashboard:
             height=280, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
-        final_chart_with_tooltip = alt.vconcat(
+        final_chart = alt.vconcat(
             kospi_chart,
             trade_chart,
             spacing=30
-        ).add_params(
-            nearest
-        ).encode(
-            tooltip=[
-                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
-                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
-                alt.Tooltip(export_col, title="수출", format='$,.2f'),
-                alt.Tooltip(import_col, title="수입", format='$,.2f'),
-                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
-            ]
         ).properties(
             bounds='flush'
         ).resolve_legend(
@@ -158,11 +210,13 @@ class Dashboard:
             stroke=None
         )
 
-        st.altair_chart(final_chart_with_tooltip, use_container_width=True)
+        st.altair_chart(final_chart, use_container_width=True)
+
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
-        with st.expander("⚙️ 데이터 보기 및 기간 설정", expanded=True):
+        # 확장 패널(expander) 제목에서 이모지를 제거합니다.
+        with st.expander("데이터 보기 및 기간 설정", expanded=True):
             cols = st.columns([1, 1, 2])
             with cols[0]:
                 st.selectbox('**국가 선택**', COUNTRY_OPTIONS, key='selected_country', on_change=self.update_states)
@@ -236,8 +290,9 @@ class Dashboard:
         else:
             self._render_charts(display_df_filtered)
         
+        # 정보 상자(info box)에서 이모지를 제거합니다.
         st.info("""
-        **💡 차트 사용법**
+        **차트 사용법**
         - **기간 변경**: 하단의 '데이터 보기 및 기간 설정'에서 **기간 버튼**을 누르거나, **시작일**과 **종료일**을 직접 선택하세요.
         - **상세 정보**: 차트 위를 마우스 오버(데스크톱)하거나 터치(모바일)하면 상세 데이터를 볼 수 있습니다.
         """)
