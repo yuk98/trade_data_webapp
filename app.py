@@ -100,8 +100,16 @@ class Dashboard:
             y=alt.Y('kospi_price:Q')
         ).transform_filter(nearest)
 
+        # [수정] 툴팁 정의를 툴팁 공급자 차트에 직접 적용합니다.
         tooltip_provider = base_chart.mark_rect(color='transparent').encode(
-            x='Date:T'
+            x='Date:T',
+            tooltip=[
+                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
+                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
+                alt.Tooltip(export_col, title="수출", format='$,.2f'),
+                alt.Tooltip(import_col, title="수입", format='$,.2f'),
+                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
+            ]
         ).add_params(nearest)
 
         kospi_chart_base = base_chart.mark_line(color=KOSPI_COLOR).encode(
@@ -140,19 +148,12 @@ class Dashboard:
             height=350, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
+        # [수정] vconcat 객체에 encode()를 호출하던 오류를 수정했습니다.
         final_chart = alt.vconcat(
             alt.layer(kospi_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
             alt.layer(trade_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
             spacing=30, bounds='flush'
-        ).resolve_legend(color="independent").configure_view(stroke=None).encode(
-            tooltip=[
-                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
-                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
-                alt.Tooltip(export_col, title="수출", format='$,.2f'),
-                alt.Tooltip(import_col, title="수입", format='$,.2f'),
-                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
-            ]
-        )
+        ).resolve_legend(color="independent").configure_view(stroke=None)
 
         st.altair_chart(final_chart, use_container_width=True)
 
@@ -206,7 +207,6 @@ class Dashboard:
             if kospi_msg: st.warning(kospi_msg)
             return
         
-        # [수정] 컨트롤을 먼저 렌더링하고, 사용자 입력을 받아 상태를 확정한 후 나머지 UI를 그립니다.
         min_date_for_controls = trade_data['Date'].min()
         max_date_for_controls = kospi_data['Date'].max()
         self._render_controls(min_date_for_controls, max_date_for_controls)
@@ -215,13 +215,11 @@ class Dashboard:
         
         full_display_df = pd.merge(trade_country_filtered, kospi_data, on='Date', how='outer').sort_values(by='Date')
         
-        # 날짜 세션 상태가 없으면 초기화합니다.
         if 'start_date_input' not in st.session_state:
             st.session_state.start_date_input = (max_date_for_controls - pd.DateOffset(years=10)).date()
         if 'end_date_input' not in st.session_state:
             st.session_state.end_date_input = max_date_for_controls.date()
         
-        # 최종적으로 날짜 범위에 따라 필터링합니다.
         display_df_filtered = full_display_df[
             (full_display_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
             (full_display_df['Date'] <= pd.to_datetime(st.session_state.end_date_input))
@@ -247,7 +245,6 @@ class Dashboard:
                 "- **KOSPI 200 데이터**: `yfinance` (원본: **Yahoo Finance**)"
             )
 
-# 이 코드는 syntax error를 수정했으며, 모든 기능이 정상적으로 작동하도록 보장합니다.
 if __name__ == "__main__":
     app = Dashboard()
     app.run()
