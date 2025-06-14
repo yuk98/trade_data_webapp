@@ -238,47 +238,83 @@ if not filtered_df.empty:
 st.write("")
 
 if not filtered_df.empty:
+    # --- 차트 설정 및 데이터 준비 ---
     data_type_suffix = '_trailing_12m' if st.session_state.is_12m_trailing else ''
     unit_suffix = '_yoy_growth' if st.session_state.show_yoy_growth else ''
 
-    export_col = f'export_amount{data_type_suffix}{unit_suffix}'
-    import_col = f'import_amount{data_type_suffix}{unit_suffix}'
-    balance_col = f'trade_balance{data_type_suffix}{unit_suffix}'
+    export_col, import_col, balance_col = [f'{c}{data_type_suffix}{unit_suffix}' for c in ['export_amount', 'import_amount', 'trade_balance']]
 
-    y_title_trade = "금액" if not st.session_state.show_yoy_growth else "YoY 성장률 (%)"
+    if st.session_state.show_yoy_growth:
+        y_title_trade, y_title_balance = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)"
+        tooltip_format = ".2f"
+    else:
+        y_title_trade, y_title_balance = "수출·수입 금액", "무역수지 금액"
+        tooltip_format = ",.0f"
+        
     if st.session_state.is_12m_trailing:
-        y_title_trade = f"12개월 누적 {y_title_trade}"
-    y_title_balance = "무역수지 " + y_title_trade
+        y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
 
-    trade_melted_df = filtered_df.melt(
-        id_vars=['year_month'], value_vars=[export_col, import_col],
-        var_name='지표', value_name='금액'
+    all_melted_df = filtered_df.melt(id_vars=['year_month'], value_vars=[export_col, import_col, balance_col], var_name='지표', value_name='값')
+    col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
+    all_melted_df['지표'] = all_melted_df['지표'].map(col_map)
+
+    # --- 차트 레이어 생성 ---
+    base_chart = alt.Chart(all_melted_df)
+    
+    # 상호작용을 위한 Selection 생성
+    nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['year_month'], empty=False)
+
+    # 공유 색상 설정
+    color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
+
+    # Layer 1: 수출, 수입 라인
+    line_layer = base_chart.mark_line(strokeWidth=2.5, clip=True).encode(
+        x=alt.X('year_month:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
+        y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5)),
+        color=color_scheme,
+    ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+
+    # Layer 2: 무역수지 바
+    bar_layer = base_chart.mark_bar(opacity=0.7, clip=True).encode(
+        x=alt.X('year_month:T'),
+        y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5)),
+        color=color_scheme,
+    ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
+
+    # Layer 3: 마우스 오버 시 나타나는 강조점
+    points_layer = base_chart.mark_circle(size=35).encode(
+        color=color_scheme,
+        opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0))
     )
-    trade_melted_df['지표'] = trade_melted_df['지표'].map({export_col: '수출', import_col: '수입'})
 
-    line_chart = alt.Chart(trade_melted_df).mark_line(strokeWidth=2.5).encode(
-        x=alt.X('year_month:T', title='연-월', axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
-        y=alt.Y('금액:Q', title=y_title_trade),
-        color=alt.Color('지표:N',
-                        scale=alt.Scale(domain=['수출', '수입'], range=['#0d6efd', '#dc3545']),
-                        legend=alt.Legend(title="구분", orient="top-left")),
-        tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip('지표:N', title='구분'),
-                 alt.Tooltip('금액:Q', title=y_title_trade, format=',.2f')]
-    )
+    # Layer 4: 수직 보조선
+    vert_rule_layer = alt.Chart(filtered_df).mark_rule(color='gray', strokeDash=[3,3]).encode(
+        x='year_month:T'
+    ).transform_filter(nearest_selection)
 
-    bar_chart = alt.Chart(filtered_df).mark_bar(opacity=0.7).encode(
-        x=alt.X('year_month:T'), y=alt.Y(balance_col, title=y_title_balance),
-        color=alt.value('#198754'),
-        tooltip=[alt.Tooltip('year_month:T', title='날짜'),
-                 alt.Tooltip(balance_col, title=y_title_balance, format=',.2f')]
-    )
+    # Layer 5: 통합 툴팁을 제공하는 투명한 이벤트 감지 레이어
+    tooltip_layer = alt.Chart(filtered_df).mark_rule(color='transparent').encode(
+        x='year_month:T',
+        tooltip=[
+            alt.Tooltip('year_month:T', title='날짜'),
+            alt.Tooltip(export_col, title=col_map[export_col], format=tooltip_format),
+            alt.Tooltip(import_col, title=col_map[import_col], format=tooltip_format),
+            alt.Tooltip(balance_col, title=col_map[balance_col], format=tooltip_format)
+        ]
+    ).add_params(nearest_selection)
 
-    final_chart = alt.layer(line_chart, bar_chart).resolve_scale(y='independent').properties(
+    # --- 모든 레이어 결합 ---
+    final_chart = alt.layer(
+        line_layer, bar_layer, vert_rule_layer, points_layer, tooltip_layer
+    ).resolve_scale(
+        y='independent'
+    ).properties(
         title={"text": f"{st.session_state.selected_country} 무역 데이터 추이", "fontSize": 20, "anchor": "start"},
         height=450
-    ).interactive()
-
+    )
+    
     st.altair_chart(final_chart, use_container_width=True)
+
 else:
     st.warning("선택된 기간에 해당하는 데이터가 없습니다. 기간을 다시 설정해주세요.")
 
@@ -300,7 +336,6 @@ for i, (label, offset_years) in enumerate(period_options.items()):
         st.session_state.end_date = end_date
         st.rerun()
 
-# --- 데이터 출처 명시 ---
 st.markdown("---")
 with st.container(border=True):
     st.subheader("데이터 출처 정보")
