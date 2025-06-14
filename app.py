@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta
-import numpy as np # Import numpy for np.sin and np.pi
+import numpy as np
+
+# st.set_page_config() 호출을 스크립트 최상단으로 이동합니다.
+st.set_page_config(layout="wide")
 
 # Function to generate dummy data (cached for performance)
 @st.cache_data
@@ -37,15 +40,17 @@ def generate_country_data(start_year, end_year, country_name, base_export, base_
 # Load and transform data (cached for performance)
 @st.cache_data
 def load_and_transform_data():
+    # 파일 이름을 trade_data.csv로 변경합니다.
+    csv_file_name = 'trade_data.csv'
     try:
-        trade_df = pd.read_csv('trade_data.csv')
+        trade_df = pd.read_csv(csv_file_name)
     except FileNotFoundError:
-        st.info("Generating dummy trade data as 'trade_data.csv' was not found.")
+        st.info(f"'{csv_file_name}' 파일을 찾을 수 없어 더미 무역 데이터를 생성합니다.")
         df_total = generate_country_data(2000, 2025, '총합', 10_000_000_000, 9_000_000_000)
         df_us = generate_country_data(2000, 2025, '미국', 2_500_000_000, 2_600_000_000)
         df_china = generate_country_data(2000, 2025, '중국', 2_000_000_000, 1_800_000_000)
         trade_df = pd.concat([df_total, df_us, df_china], ignore_index=True)
-        trade_df.to_csv('trade_data.csv', index=False)
+        trade_df.to_csv(csv_file_name, index=False) # 생성 시 파일 이름도 변경
 
     trade_df['year_month'] = pd.to_datetime(trade_df['year_month'])
     trade_df = trade_df.sort_values(by=['country_name', 'year_month']).reset_index(drop=True)
@@ -53,16 +58,10 @@ def load_and_transform_data():
     # Calculate 12-month trailing values for 'export_amount', 'import_amount', 'trade_balance'
     for col in ['export_amount', 'import_amount', 'trade_balance']:
         trade_df[f'{col}_trailing_12m'] = trade_df.groupby('country_name')[col].rolling(window=12, min_periods=12).sum().reset_index(level=0, drop=True)
-    
-    # Also calculate 12-month trailing for YoY growth of raw data for consistency
-    # This ensures that when 12-Month Trailing is active, YoY growth applies to *that* data
-    # (Though typically YoY for trailing data is less common or defined differently)
-    # For simplicity, we calculate YoY growth for both raw and trailing data.
 
     # Calculate YoY growth rate for raw data
     for col in ['export_amount', 'import_amount', 'trade_balance']:
         trade_df[f'{col}_yoy_growth'] = trade_df.groupby('country_name')[col].pct_change(periods=12) * 100
-        # Replace inf/-inf with NaN for plotting
         trade_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     # Calculate YoY growth rate for 12-month trailing data
@@ -76,8 +75,6 @@ def load_and_transform_data():
 # Load and transform the data
 trade_data_processed = load_and_transform_data()
 
-# Streamlit UI
-st.set_page_config(layout="wide")
 st.title('월별 무역 데이터 대시보드')
 
 # Initialize session state for transformation modes
@@ -148,11 +145,9 @@ for prefix in metric_prefixes:
         base_col = prefix
 
     if st.session_state.show_yoy_growth:
-        # If YoY is active, append '_yoy_growth' to the chosen base
-        selected_metrics.append(f'{base_col}_yoy_growth')
+        selected_metrics.append(f'{base_col}_yoy_growth') # e.g., export_amount_trailing_12m_yoy_growth
     else:
-        # Otherwise, use the base column directly
-        selected_metrics.append(base_col)
+        selected_metrics.append(base_col) # e.g., export_amount_trailing_12m or export_amount
 
 # Filter data
 filtered_df = trade_data_processed[
@@ -172,11 +167,7 @@ final_melted_df = final_melted_df.dropna(subset=['value'])
 
 # Clean metric names for display
 def clean_metric_name(metric_raw):
-    if '_yoy_growth' in metric_raw:
-        metric_raw = metric_raw.replace('_yoy_growth', '')
-    if '_trailing_12m' in metric_raw:
-        metric_raw = metric_raw.replace('_trailing_12m', '')
-    
+    # Determine the display name based on the original metric type
     if 'export_amount' in metric_raw: return '수출 금액'
     if 'import_amount' in metric_raw: return '수입 금액'
     if 'trade_balance' in metric_raw: return '무역 수지'
@@ -196,7 +187,6 @@ else:
 # Altair Chart
 chart = alt.Chart(final_melted_df).mark_line().encode(
     x=alt.X('year_month:T', title='연-월', axis=alt.Axis(format='%Y-%m')),
-    # Y-axis auto-fits as no explicit domain is set, which is the desired behavior
     y=alt.Y('value:Q', title=y_axis_title),
     color=alt.Color('display_metric:N', title='지표 유형',
                     scale=alt.Scale(domain=['수출 금액', '수입 금액', '무역 수지'],
