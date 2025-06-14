@@ -34,15 +34,19 @@ class DataHandlerMock:
         df = pd.DataFrame(data)
         df['trade_balance'] = df['export_amount'] - df['import_amount']
         
-        # 12개월 누적 및 YoY 계산
+        # [수정] 12개월 누적 및 YoY 계산 로직 수정
+        # df.update()는 새 열을 추가하지 못하므로, 처리된 DataFrame들을 리스트에 모아 concat으로 합칩니다.
+        processed_dataframes = []
         for country in df['country_name'].unique():
             country_df = df[df['country_name'] == country].sort_values('Date').copy()
             for col in ['export_amount', 'import_amount', 'trade_balance']:
                 country_df[f'{col}_trailing_12m'] = country_df[col].rolling(window=12).sum()
                 country_df[f'{col}_yoy_growth'] = country_df[col].pct_change(periods=12) * 100
                 country_df[f'{col}_trailing_12m_yoy_growth'] = country_df[f'{col}_trailing_12m'].pct_change(periods=12) * 100
-            df.update(country_df)
-        return df
+            processed_dataframes.append(country_df)
+        
+        # 처리된 모든 데이터프레임을 하나로 합쳐서 반환
+        return pd.concat(processed_dataframes)
 
     def get_and_update_kospi_data(self):
         # 샘플 KOSPI 데이터 생성
@@ -123,8 +127,8 @@ class Dashboard:
                     prev_month_val = prev_month_data[col_name].iloc[0] if not prev_month_data.empty else 0
                     prev_year_val = prev_year_data[col_name].iloc[0] if not prev_year_data.empty else 0
                     
-                    mom_delta = ((current_val - prev_month_val) / abs(prev_month_val)) * 100 if prev_month_val else 0
-                    yoy_delta = ((current_val - prev_year_val) / abs(prev_year_val)) * 100 if prev_year_val else 0
+                    mom_delta = ((current_val - prev_month_val) / abs(prev_month_val)) * 100 if prev_month_val != 0 else 0
+                    yoy_delta = ((current_val - prev_year_val) / abs(prev_year_val)) * 100 if prev_year_val != 0 else 0
 
                     st.metric(label=f"{latest_trade_date.strftime('%Y년 %m월')} {label}", value=f"${current_val/1e9:.2f}B")
                     st.markdown(f"""
@@ -184,7 +188,7 @@ class Dashboard:
         )
         
         line_chart = trade_base_chart.transform_filter(alt.datum.지표 != '무역수지').mark_line(strokeWidth=2.5).encode(
-            y=alt.Y('값:Q', title="금액 (수출입)", scale=alt.Scale(zero=True), axis=alt.Axis(labelExpr=y_axis_format))
+            y=alt.Y('값:Q', title="금액 (수출입)", scale=alt.Scale(zero=False), axis=alt.Axis(labelExpr=y_axis_format))
         )
         area_chart = trade_base_chart.transform_filter(alt.datum.지표 == '무역수지').mark_area(opacity=0.4, line={'color': TERTIARY_COLOR}).encode(
             y=alt.Y('값:Q', title="금액 (무역수지)", scale=alt.Scale(zero=True), axis=alt.Axis(labelExpr=y_axis_format))
