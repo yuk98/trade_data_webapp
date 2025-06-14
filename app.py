@@ -81,7 +81,7 @@ class Dashboard:
                     """, unsafe_allow_html=True)
 
     def _render_charts(self, df: pd.DataFrame):
-        """상호작용 기능이 수정된 Altair 차트를 생성하고 렌더링합니다."""
+        """상호작용 기능이 포함된 Altair 차트를 생성하고 렌더링합니다."""
         nearest = alt.selection_point(on='mouseover', encodings=['x'], nearest=True, empty=False)
         
         base_cols = ['export_amount', 'import_amount', 'trade_balance']
@@ -136,13 +136,22 @@ class Dashboard:
             height=280, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
+        # [수정] 툴팁을 제공하는 투명한 레이어를 마지막에 추가하는 방식으로 변경하여 오류 해결
         final_chart = alt.vconcat(
             kospi_chart,
             trade_chart,
-            spacing=30, bounds='flush'
-        ).add_params(
-            nearest
-        ).encode(
+            spacing=30
+        ).properties(
+            bounds='flush'
+        ).resolve_legend(
+            color="independent"
+        ).configure_view(
+            stroke=None
+        )
+
+        # 툴팁을 위한 투명한 레이어 생성
+        tooltip_layer = alt.Chart(df).mark_rect(color='transparent').encode(
+            x='Date:T',
             tooltip=[
                 alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
                 alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
@@ -150,13 +159,10 @@ class Dashboard:
                 alt.Tooltip(import_col, title="수입", format='$,.2f'),
                 alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
             ]
-        ).resolve_legend(
-            color="independent"
-        ).configure_view(
-            stroke=None
-        )
-
-        st.altair_chart(final_chart, use_container_width=True)
+        ).add_params(nearest)
+        
+        # 최종 차트에 툴팁 레이어를 겹침
+        st.altair_chart(alt.layer(final_chart, tooltip_layer), use_container_width=True)
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
@@ -210,8 +216,7 @@ class Dashboard:
         
         min_date_for_controls = trade_data['Date'].min()
         max_date_for_controls = kospi_data['Date'].max()
-
-        # [수정] 세션 상태 초기화 시 10년 기본값을 설정합니다.
+        
         if 'start_date_input' not in st.session_state:
             st.session_state.start_date_input = (max_date_for_controls - pd.DateOffset(years=10)).date()
         if 'end_date_input' not in st.session_state:
