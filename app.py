@@ -26,48 +26,23 @@ st.markdown("""
 
 # --- 데이터 생성 및 로드 함수 (캐싱) ---
 @st.cache_data
-def generate_country_data(start_year, end_year, country_name, base_export, base_import):
-    data_list = []
-    current_date = datetime(start_year, 1, 1)
-    end_date = datetime(end_year, 5, 1)
-
-    while current_date <= end_date:
-        growth_factor_export = 1 + (current_date.year - start_year) * 0.03 + (current_date.month / 12 * 0.01)
-        growth_factor_import = 1 + (current_date.year - start_year) * 0.025 + (current_date.month / 12 * 0.005)
-        seasonal_factor = 1 + (np.sin(current_date.month * 2 * np.pi / 12) * 0.05)
-
-        export_val = base_export * growth_factor_export * seasonal_factor
-        import_val = base_import * growth_factor_import * seasonal_factor
-        trade_balance_val = export_val - import_val
-
-        data_list.append({
-            'export_amount': int(export_val),
-            'import_amount': int(import_val),
-            'trade_balance': int(trade_balance_val),
-            'country_name': country_name,
-            'year_month': current_date.strftime('%Y-%m')
-        })
-        if current_date.month == 12:
-            current_date = datetime(current_date.year + 1, 1, 1)
-        else:
-            current_date = current_date.replace(month=current_date.month + 1)
-    return pd.DataFrame(data_list)
-
-@st.cache_data
 def load_and_transform_data():
+    """
+    trade_data.csv 파일을 로드하고 모든 파생 지표(누적, YoY 등)를 계산합니다.
+    파일이 없으면 None을 반환합니다.
+    이 함수의 결과는 캐시되어 앱 세션 동안 한 번만 실행됩니다.
+    """
     csv_file_name = 'trade_data.csv'
     try:
         trade_df = pd.read_csv(csv_file_name)
     except FileNotFoundError:
-        df_total = generate_country_data(2000, 2025, '총합', 10_000_000_000, 9_000_000_000)
-        df_us = generate_country_data(2000, 2025, '미국', 2_500_000_000, 2_600_000_000)
-        df_china = generate_country_data(2000, 2025, '중국', 2_000_000_000, 1_800_000_000)
-        trade_df = pd.concat([df_total, df_us, df_china], ignore_index=True)
-        trade_df.to_csv(csv_file_name, index=False)
+        # 파일이 없으면 None을 반환하여 로딩 실패를 알림
+        return None
 
     trade_df['year_month'] = pd.to_datetime(trade_df['year_month'])
     trade_df = trade_df.sort_values(by=['country_name', 'year_month']).reset_index(drop=True)
 
+    # 모든 경우의 수에 대한 데이터 컬럼을 미리 계산
     for col in ['export_amount', 'import_amount', 'trade_balance']:
         trade_df[f'{col}_trailing_12m'] = trade_df.groupby('country_name')[col].rolling(window=12, min_periods=12).sum().reset_index(level=0, drop=True)
         trade_df[f'{col}_yoy_growth'] = trade_df.groupby('country_name')[col].pct_change(periods=12) * 100
@@ -76,9 +51,13 @@ def load_and_transform_data():
     trade_df.replace([np.inf, -np.inf], np.nan, inplace=True)
     return trade_df
 
-# --- 데이터 로드 ---
-trade_data_processed = load_and_transform_data()
+# --- 메인 스크립트 시작 ---
 
+# 데이터 로드 시도 및 실패 시 앱 중단
+trade_data_processed = load_and_transform_data()
+if trade_data_processed is None:
+    st.error("🚨 데이터 파일 로딩 실패: 'trade_data.csv' 파일을 찾을 수 없습니다. 스크립트와 동일한 폴더에 파일이 있는지 확인해주세요.")
+    st.stop() # 데이터가 없으면 앱 실행을 중지
 
 # --- 세션 상태 및 URL 파라미터 처리 ---
 if 'init_done' not in st.session_state:
@@ -147,23 +126,23 @@ if not filtered_df.empty:
 st.write("")
 
 if not filtered_df.empty:
-    data_type_suffix = '_trailing_12m' if st.session_state.is_12m_trailing else ''
-    unit_suffix = '_yoy_growth' if st.session_state.show_yoy_growth else ''
-    export_col, import_col, balance_col = [f'{c}{data_type_suffix}{unit_suffix}' for c in ['export_amount', 'import_amount', 'trade_balance']]
-    
-    all_melted_df = filtered_df.melt(id_vars=['year_month'], value_vars=[export_col, import_col, balance_col], var_name='지표', value_name='값')
-    
-    # --- 데이터 유효성 검사 및 안내 메시지 ---
-    if all_melted_df['값'].isnull().all():
-        st.warning("📈 선택하신 기간과 옵션 조합으로는 표시할 데이터가 없습니다. 더 긴 기간(최소 3년 이상)을 선택해 주세요.")
+    base_col_names = ['export_amount', 'import_amount', 'trade_balance']
+    if st.session_state.is_12m_trailing:
+        if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_trailing_12m_yoy_growth' for c in base_col_names]
+        else: cols_to_use = [f'{c}_trailing_12m' for c in base_col_names]
     else:
-        # --- 차트 시각화 (데이터가 유효할 때만 실행) ---
-        if st.session_state.show_yoy_growth:
-            y_title_trade, y_title_balance, tooltip_format = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)", ".2f"
-        else:
-            y_title_trade, y_title_balance, tooltip_format = "수출·수입 금액", "무역수지 금액", ",.0f"
-        if st.session_state.is_12m_trailing:
-            y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
+        if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
+        else: cols_to_use = base_col_names
+    export_col, import_col, balance_col = cols_to_use
+
+    all_melted_df = filtered_df.melt(id_vars=['year_month'], value_vars=[export_col, import_col, balance_col], var_name='지표', value_name='값')
+
+    if all_melted_df['값'].isnull().all():
+        st.warning("📈 **표시할 데이터 없음**: 현재 설정과 선택된 기간으로는 계산 가능한 데이터가 없습니다. '12개월 누적 YoY' 같은 지표는 최소 24개월의 데이터가 필요하므로, '5년' 또는 '전체 기간' 등 더 긴 기간을 선택해 보세요.")
+    else:
+        if st.session_state.show_yoy_growth: y_title_trade, y_title_balance, tooltip_format = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)", ".2f"
+        else: y_title_trade, y_title_balance, tooltip_format = "수출·수입 금액", "무역수지 금액", ",.0f"
+        if st.session_state.is_12m_trailing: y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
         
         col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
         all_melted_df['지표'] = all_melted_df['지표'].map(col_map)
@@ -172,36 +151,13 @@ if not filtered_df.empty:
         nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['year_month'], empty=False)
         color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
 
-        line_layer = base_chart.mark_line(strokeWidth=2.5, clip=True).encode(
-            x=alt.X('year_month:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
-            y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5)),
-            color=color_scheme,
-        ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+        line_layer = base_chart.mark_line(strokeWidth=2.5, clip=True).encode(x=alt.X('year_month:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+        bar_layer = base_chart.mark_bar(opacity=0.7, clip=True).encode(x=alt.X('year_month:T'), y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
+        points_layer = base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
+        vert_rule_layer = alt.Chart(filtered_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='year_month:T').transform_filter(nearest_selection)
+        tooltip_layer = alt.Chart(filtered_df).mark_rule(color='transparent').encode(x='year_month:T', tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip(export_col, title=col_map[export_col], format=tooltip_format), alt.Tooltip(import_col, title=col_map[import_col], format=tooltip_format), alt.Tooltip(balance_col, title=col_map[balance_col], format=tooltip_format)]).add_params(nearest_selection)
 
-        bar_layer = base_chart.mark_bar(opacity=0.7, clip=True).encode(
-            x=alt.X('year_month:T'),
-            y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5)),
-            color=color_scheme,
-        ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
-
-        points_layer = base_chart.mark_circle(size=35).encode(
-            color=color_scheme,
-            opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0))
-        )
-
-        vert_rule_layer = alt.Chart(filtered_df).mark_rule(color='gray', strokeDash=[3,3]).encode(
-            x='year_month:T'
-        ).transform_filter(nearest_selection)
-
-        tooltip_layer = alt.Chart(filtered_df).mark_rule(color='transparent').encode(
-            x='year_month:T',
-            tooltip=[alt.Tooltip('year_month:T', title='날짜'), alt.Tooltip(export_col, title=col_map[export_col], format=tooltip_format), alt.Tooltip(import_col, title=col_map[import_col], format=tooltip_format), alt.Tooltip(balance_col, title=col_map[balance_col], format=tooltip_format)]
-        ).add_params(nearest_selection)
-
-        final_chart = alt.layer(line_layer, bar_layer, vert_rule_layer, points_layer, tooltip_layer).resolve_scale(y='independent').properties(
-            title={"text": f"{st.session_state.selected_country} 무역 데이터 추이", "fontSize": 20, "anchor": "start"},
-            height=450
-        )
+        final_chart = alt.layer(line_layer, bar_layer, vert_rule_layer, points_layer, tooltip_layer).resolve_scale(y='independent').properties(title={"text": f"{st.session_state.selected_country} 무역 데이터 추이", "fontSize": 20, "anchor": "start"}, height=450)
         st.altair_chart(final_chart, use_container_width=True)
 else:
     st.warning("선택된 기간에 해당하는 데이터가 없습니다. 기간을 다시 설정해주세요.")
