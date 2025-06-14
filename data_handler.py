@@ -16,11 +16,12 @@ def load_trade_data(filename="trade_data.csv"):
     try:
         trade_df = pd.read_csv(filename)
     except FileNotFoundError:
-        return None
+        return None  # 파일이 없으면 None을 반환하여 로딩 실패를 알림
 
     trade_df['year_month'] = pd.to_datetime(trade_df['year_month'])
     trade_df = trade_df.sort_values(by=['country_name', 'year_month']).reset_index(drop=True)
 
+    # 모든 경우의 수에 대한 데이터 컬럼을 미리 계산
     for col in ['export_amount', 'import_amount', 'trade_balance']:
         trade_df[f'{col}_trailing_12m'] = trade_df.groupby('country_name')[col].rolling(window=12, min_periods=12).sum().reset_index(level=0, drop=True)
         trade_df[f'{col}_yoy_growth'] = trade_df.groupby('country_name')[col].pct_change(periods=12) * 100
