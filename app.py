@@ -9,17 +9,10 @@ import data_handler
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
 
-# --- 커스텀 CSS ---
-st.markdown("""
-<style>
-    body { font-family: 'Pretendard', sans-serif; }
-    /* 컨트롤 패널과 메트릭 카드 스타일은 유지 */
-    .control-panel { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border: 1px solid #e9ecef; margin-top: 20px; margin-bottom: 20px; }
-    .metric-card { background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 10px; padding: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.04); height: 100%; }
-    .metric-card h3 { font-size: 1.1rem; color: #495057; margin-bottom: 5px; }
-    .metric-card p { font-size: 1.5rem; font-weight: 600; color: #212529; }
-</style>
-""", unsafe_allow_html=True)
+# --- URL 파라미터 처리 ---
+# URL 파라미터 처리 로직은 안정적인 st.radio 위젯으로 대체되어 더 이상 필요 없습니다.
+# 다만, 만약의 경우를 대비해 남겨두거나, 완전히 삭제해도 무방합니다.
+# 여기서는 안정성을 위해 삭제된 버전을 유지합니다.
 
 
 # --- 데이터 로드 및 유효성 검사 ---
@@ -61,14 +54,48 @@ display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='l
 
 # --- 메트릭 카드 UI ---
 if not display_df.empty:
-    latest_trade_data = display_df.dropna(subset=['export_amount']).sort_values('Date').iloc[-1]
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("최신 수출액", f"${latest_trade_data['export_amount']/1e9:.2f}B")
-    with m2:
-        st.metric("최신 수입액", f"${latest_trade_data['import_amount']/1e9:.2f}B")
-    with m3:
-        st.metric("최신 무역수지", f"${latest_trade_data['trade_balance']/1e9:.2f}B")
+    latest_date = display_df['Date'].max()
+    prev_month_date = latest_date - pd.DateOffset(months=1)
+    prev_year_date = latest_date - pd.DateOffset(years=1)
+    
+    latest_data = display_df[display_df['Date'] == latest_date]
+    prev_month_data = display_df[display_df['Date'] == prev_month_date]
+    prev_year_data = display_df[display_df['Date'] == prev_year_date]
+
+    metrics_to_show = {
+        '수출액': 'export_amount',
+        '수입액': 'import_amount',
+        '무역수지': 'trade_balance'
+    }
+
+    cols = st.columns(3)
+    for i, (metric_label, col_name) in enumerate(metrics_to_show.items()):
+        with cols[i]:
+            with st.container(border=True):
+                current_value = latest_data[col_name].iloc[0] if not latest_data.empty else 0
+                
+                prev_month_value = prev_month_data[col_name].iloc[0] if not prev_month_data.empty else None
+                mom_delta_str = "---"
+                if prev_month_value is not None and prev_month_value != 0:
+                    mom_pct = ((current_value - prev_month_value) / abs(prev_month_value)) * 100
+                    mom_delta_str = f"{mom_pct:+.1f}%"
+                
+                prev_year_value = prev_year_data[col_name].iloc[0] if not prev_year_data.empty else None
+                yoy_delta_str = "---"
+                if prev_year_value is not None and prev_year_value != 0:
+                    yoy_pct = ((current_value - prev_year_value) / abs(prev_year_value)) * 100
+                    yoy_delta_str = f"{yoy_pct:+.1f}%"
+
+                st.metric(
+                    label=f"{latest_date.strftime('%Y년 %m월')} {metric_label}",
+                    value=f"${current_value/1e9:.2f}B",
+                )
+                st.markdown(f"""
+                <div style="font-size: 0.8rem; text-align: right; color: #555;">
+                    전월 대비: <b>{mom_delta_str}</b><br>
+                    전년 대비: <b>{yoy_delta_str}</b>
+                </div>
+                """, unsafe_allow_html=True)
 
 # --- 차트 생성 ---
 if not display_df.empty:
@@ -96,11 +123,11 @@ if not display_df.empty:
 
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(labels=False)),
-        y=alt.Y('kospi_price:Q', title='KOSPI 200 (Log)', scale=alt.Scale(type="log"), axis=alt.Axis(tickCount=4)),
+        y=alt.Y('kospi_price:Q', title='KOSPI 200', axis=alt.Axis(tickCount=5, grid=False)),
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     kospi_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_rule, tooltip_layer).properties(height=100, title="KOSPI 200 지수")
+    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_rule, tooltip_layer).properties(height=120, title="KOSPI 200 지수")
 
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
@@ -113,8 +140,8 @@ if not display_df.empty:
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
     trade_base_chart = alt.Chart(trade_melted_df)
     
-    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=True).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
-    trade_bar = trade_base_chart.mark_bar(opacity=0.7, clip=True).encode(x=alt.X('Date:T'), y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
+    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=True).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5, grid=False)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+    trade_bar = trade_base_chart.mark_bar(opacity=0.7, clip=True).encode(x=alt.X('Date:T'), y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5, grid=False)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     trade_chart = alt.layer(trade_line, trade_bar, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
@@ -122,46 +149,25 @@ if not display_df.empty:
     final_combined_chart = alt.vconcat(kospi_chart, trade_chart, spacing=5).resolve_legend(color="independent").configure_view(strokeWidth=0).configure_title(fontSize=16, anchor="start", subtitleFontSize=12)
     st.altair_chart(final_combined_chart, use_container_width=True)
 
-# --- [수정] 컨트롤 패널 UI ---
+# --- 컨트롤 패널 UI ---
 st.markdown("---")
 st.markdown("##### ⚙️ 데이터 보기 옵션")
-
-# st.radio를 사용하여 안정적인 토글 구현
 control_cols = st.columns(3)
 with control_cols[0]:
-    # 국가 선택
-    selected_country = st.selectbox(
-        '**국가 선택**',
-        options=['총합', '미국', '중국'],
-        index=['총합', '미국', '중국'].index(st.session_state.selected_country)
-    )
+    selected_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country))
     if selected_country != st.session_state.selected_country:
         st.session_state.selected_country = selected_country
         st.rerun()
-
 with control_cols[1]:
-    # 데이터 형태 선택
     options_12m = ['월별', '12개월 누적']
-    selected_12m = st.radio(
-        '**데이터 형태 (무역)**',
-        options_12m,
-        index=1 if st.session_state.is_12m_trailing else 0,
-        horizontal=True,
-    )
+    selected_12m = st.radio('**데이터 형태 (무역)**', options_12m, index=1 if st.session_state.is_12m_trailing else 0, horizontal=True)
     new_is_12m_trailing = (selected_12m == '12개월 누적')
     if new_is_12m_trailing != st.session_state.is_12m_trailing:
         st.session_state.is_12m_trailing = new_is_12m_trailing
         st.rerun()
-
 with control_cols[2]:
-    # 표시 단위 선택
     options_yoy = ['금액', 'YoY']
-    selected_yoy = st.radio(
-        '**표시 단위 (무역)**',
-        options_yoy,
-        index=1 if st.session_state.show_yoy_growth else 0,
-        horizontal=True
-    )
+    selected_yoy = st.radio('**표시 단위 (무역)**', options_yoy, index=1 if st.session_state.show_yoy_growth else 0, horizontal=True)
     new_show_yoy_growth = (selected_yoy == 'YoY')
     if new_show_yoy_growth != st.session_state.show_yoy_growth:
         st.session_state.show_yoy_growth = new_show_yoy_growth
@@ -169,7 +175,8 @@ with control_cols[2]:
 
 # --- 기간 선택 UI ---
 st.markdown("---")
-st.markdown('**기간 빠르게 탐색하기**')
+# [수정] 텍스트 변경
+st.markdown('**기간 설정**')
 period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '20년': 20, '전체 기간': 99}
 period_cols = st.columns(len(period_options))
 for i, (label, offset_years) in enumerate(period_options.items()):
