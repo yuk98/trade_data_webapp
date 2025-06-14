@@ -8,8 +8,16 @@ import data_handler
 st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
 
 # --- 데이터 로드 및 유효성 검사 ---
-trade_data_processed = data_handler.load_trade_data()
-daily_kospi_data, kospi_status_msg = data_handler.get_and_update_kospi_data()
+# data_handler.py가 별도 파일로 존재한다고 가정합니다.
+# 만약 없다면 이 부분을 실제 데이터 로딩 코드로 대체해야 합니다.
+try:
+    trade_data_processed = data_handler.load_trade_data()
+    daily_kospi_data, kospi_status_msg = data_handler.get_and_update_kospi_data()
+except Exception as e:
+    st.error(f"데이터 핸들러 로딩 중 오류 발생: {e}")
+    st.info("`data_handler.py` 파일이 `app.py`와 동일한 폴더에 있는지, 필요한 함수(`load_trade_data`, `get_and_update_kospi_data`, `process_kospi_for_chart`)가 모두 정의되어 있는지 확인해주세요.")
+    st.stop()
+
 
 if kospi_status_msg:
     st.warning(kospi_status_msg)
@@ -37,7 +45,7 @@ trade_filtered_df = trade_data_processed[
     (trade_data_processed['country_name'] == st.session_state.selected_country)
 ].copy()
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
-display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left')
+display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left').dropna(subset=['Date', 'kospi_price'])
 
 # --- 메트릭 카드 UI ---
 if not display_df.empty:
@@ -82,7 +90,9 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
+    
     nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
+    
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
         tooltip=[
@@ -93,8 +103,10 @@ if not display_df.empty:
             alt.Tooltip(balance_col, title=f"무역수지 ({st.session_state.selected_country})", format=f"{',' if not st.session_state.show_yoy_growth else ''}.2f")
         ]
     ).add_params(nearest_selection)
+
+    # [수정] 위쪽 차트의 X축을 숨겨서 깔끔하게 만듭니다. (axis=None)
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
-        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
+        x=alt.X('Date:T', title=None, axis=None),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
@@ -113,26 +125,21 @@ if not display_df.empty:
     if st.session_state.is_12m_trailing: 
         y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
     
-    # [수정 1] Y축 레이블 포맷을 조건부로 설정하는 로직 추가
     if st.session_state.show_yoy_growth:
-        # YoY 성장률일 경우, 일반 숫자 포맷 사용
         y_axis_config = alt.Axis(tickCount=5, grid=False, format='.0f')
     else:
-        # 금액일 경우, 10억 단위('B')로 축약하는 labelExpr 사용
         label_expr = "format(datum.value / 1000000000, '.1f') + 'B'"
         y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
     trade_base_chart = alt.Chart(trade_melted_df)
     
-    # [수정 1] y축 설정에 위에서 정의한 y_axis_config 적용
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), 
         y=alt.Y('값:Q', title=y_title_trade, axis=y_axis_config), 
         color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
     
-    # [수정 1] y축 설정에 위에서 정의한 y_axis_config 적용
     trade_area = trade_base_chart.mark_area(opacity=0.5, clip=False, line={'color': '#198754'}).encode(
         x=alt.X('Date:T'), 
         y=alt.Y('값:Q', title=y_title_balance, axis=y_axis_config), 
@@ -143,13 +150,15 @@ if not display_df.empty:
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     trade_chart = alt.layer(trade_line, trade_area, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
 
-    # [수정 2] vconcat에 bounds='flush'를 추가하여 차트 정렬 문제 해결
+    # [수정] resolve_scale(x='shared')를 추가하여 두 차트의 X축을 완벽하게 동기화합니다.
     final_combined_chart = alt.vconcat(
         kospi_chart, trade_chart, spacing=5, bounds='flush'
     ).add_params(
         zoom
     ).resolve_legend(
         color="independent"
+    ).resolve_scale(
+        x='shared'
     ).configure_view(
         strokeWidth=0
     ).configure_title(
