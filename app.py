@@ -111,7 +111,12 @@ if not display_df.empty:
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(y='kospi_price:Q').transform_filter(nearest_selection)
-    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer).properties(height=120, title="KOSPI 200 지수")
+    
+    # [수정] 차트 제목을 개별적으로 설정하여 고정
+    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer).properties(
+        height=120, 
+        title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
+    )
 
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
@@ -127,16 +132,12 @@ if not display_df.empty:
     if st.session_state.show_yoy_growth:
         y_axis_config = alt.Axis(tickCount=5, grid=False, format='.0f')
     else:
-        # [수정] Y축 레이블을 정수로 표시 ('.0f')
         label_expr = "format(datum.value / 1000000000, '.0f') + 'B'"
         y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
     
-    # [수정] 제목이 움직이지 않도록 .properties()를 사용하여 기본 차트에 제목을 설정
-    trade_base_chart = alt.Chart(trade_melted_df).properties(
-        title=alt.TitleParams(text=f"{st.session_state.selected_country} 무역 데이터", anchor='start')
-    )
+    trade_base_chart = alt.Chart(trade_melted_df)
     
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), 
@@ -153,18 +154,19 @@ if not display_df.empty:
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     
-    # [수정] 제목 설정을 trade_base_chart로 옮겼으므로 여기서는 properties에서 title 제거
+    # [수정] 차트 제목을 개별적으로 설정하여 고정
     trade_chart = alt.layer(
         trade_line, trade_area, trade_rule, trade_points, tooltip_layer
+    ).properties(
+        height=350,
+        title=alt.TitleParams(text=f"{st.session_state.selected_country} 무역 데이터", anchor="start", fontSize=16)
     ).resolve_scale(
         y='independent'
-    ).properties(
-        height=350
     )
 
-    # [수정] 차트 간 간격을 늘려 겹침 문제 해결 (spacing=30)
+    # [수정] 차트 간 간격을 늘려 겹침 문제 해결 (spacing=40)
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, spacing=30, bounds='flush'
+        kospi_chart, trade_chart, spacing=40, bounds='flush'
     ).add_params(
         zoom
     ).resolve_legend(
@@ -174,10 +176,6 @@ if not display_df.empty:
         y='independent'
     ).configure_view(
         strokeWidth=0
-    ).configure_title(
-        fontSize=16, 
-        anchor="start",
-        subtitleFontSize=12
     )
     
     st.altair_chart(final_combined_chart, use_container_width=True)
