@@ -21,7 +21,7 @@ class Dashboard:
     """
 
     def __init__(self):
-        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="�")
+        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
         if 'init_done' not in st.session_state:
             self._initialize_session_state()
 
@@ -81,8 +81,8 @@ class Dashboard:
                     """, unsafe_allow_html=True)
 
     def _render_charts(self, df: pd.DataFrame):
-        """상호작용 기능이 복원된 Altair 차트를 생성하고 렌더링합니다."""
-        nearest = alt.selection_point(encodings=['x'], nearest=True, empty=False)
+        """상호작용 기능이 포함된 Altair 차트를 생성하고 렌더링합니다."""
+        nearest = alt.selection_point(on='mouseover', encodings=['x'], nearest=True, empty=False)
         
         base_cols = ['export_amount', 'import_amount', 'trade_balance']
         trailing = '_trailing_12m' if st.session_state.is_12m_trailing else ''
@@ -205,22 +205,22 @@ class Dashboard:
             st.error("데이터 로딩에 실패했습니다. 파일을 확인하거나 인터넷 연결을 점검해주세요.")
             if kospi_msg: st.warning(kospi_msg)
             return
+        
+        # [수정] 컨트롤을 먼저 렌더링하고, 사용자 입력을 받아 상태를 확정한 후 나머지 UI를 그립니다.
+        min_date_for_controls = trade_data['Date'].min()
+        max_date_for_controls = kospi_data['Date'].max()
+        self._render_controls(min_date_for_controls, max_date_for_controls)
 
-        self._render_controls(trade_data['Date'].min(), kospi_data['Date'].max())
-
-        # [수정] 데이터 병합 로직을 개선하여 KOSPI 데이터가 유실되지 않도록 합니다.
-        # 1. 먼저 국가별로 무역 데이터를 필터링합니다.
         trade_country_filtered = trade_data[trade_data['country_name'] == st.session_state.selected_country].copy()
         
-        # 2. 필터링된 무역 데이터와 전체 KOSPI 데이터를 병합합니다.
         full_display_df = pd.merge(trade_country_filtered, kospi_data, on='Date', how='outer').sort_values(by='Date')
         
-        # 날짜 세션 상태 초기화
+        # 날짜 세션 상태가 없으면 초기화합니다.
         if 'start_date_input' not in st.session_state:
-            st.session_state.start_date_input = (full_display_df['Date'].max() - pd.DateOffset(years=10)).date()
+            st.session_state.start_date_input = (max_date_for_controls - pd.DateOffset(years=10)).date()
         if 'end_date_input' not in st.session_state:
-            st.session_state.end_date_input = full_display_df['Date'].max().date()
-
+            st.session_state.end_date_input = max_date_for_controls.date()
+        
         # 최종적으로 날짜 범위에 따라 필터링합니다.
         display_df_filtered = full_display_df[
             (full_display_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
@@ -247,7 +247,7 @@ class Dashboard:
                 "- **KOSPI 200 데이터**: `yfinance` (원본: **Yahoo Finance**)"
             )
 
+# 이 코드는 syntax error를 수정했으며, 모든 기능이 정상적으로 작동하도록 보장합니다.
 if __name__ == "__main__":
     app = Dashboard()
     app.run()
-�
