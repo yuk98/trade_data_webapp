@@ -36,52 +36,77 @@ if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
     st.session_state.is_12m_trailing = True
     st.session_state.show_yoy_growth = False
+    
+    # [모바일] 기간 선택 버튼을 위한 세션 상태
+    st.session_state.selected_period = '10년'
+    end_date_default = trade_data_processed['Date'].max()
+    start_date_default = end_date_default - pd.DateOffset(years=10)
+    st.session_state.start_date = start_date_default
+    st.session_state.end_date = end_date_default
+
     st.session_state.init_done = True
 
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
 
 # --- 데이터 필터링 및 통합 ---
+# [모바일] 기간 선택 버튼에 따라 데이터를 필터링
 trade_filtered_df = trade_data_processed[
-    (trade_data_processed['country_name'] == st.session_state.selected_country)
+    (trade_data_processed['country_name'] == st.session_state.selected_country) &
+    (trade_data_processed['Date'] >= st.session_state.start_date) &
+    (trade_data_processed['Date'] <= st.session_state.end_date)
 ].copy()
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
-display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left').dropna(subset=['Date', 'kospi_price'])
+
+kospi_filtered_df = kospi_data_processed[
+    (kospi_data_processed['Date'] >= st.session_state.start_date) &
+    (kospi_data_processed['Date'] <= st.session_state.end_date)
+].copy()
+
+display_df = pd.merge(
+    trade_filtered_df, kospi_filtered_df, on='Date', how='outer'
+).sort_values(by='Date').reset_index(drop=True)
+
 
 # --- 메트릭 카드 UI ---
 if not display_df.empty:
-    latest_date = display_df['Date'].max()
-    prev_month_date = latest_date - pd.DateOffset(months=1)
-    prev_year_date = latest_date - pd.DateOffset(years=1)
-    latest_data = display_df[display_df['Date'] == latest_date]
-    prev_month_data = display_df[display_df['Date'] == prev_month_date]
-    prev_year_data = display_df[display_df['Date'] == prev_year_date]
-    metrics_to_show = {'수출액': 'export_amount', '수입액': 'import_amount', '무역수지': 'trade_balance'}
-    cols = st.columns(3)
-    for i, (metric_label, col_name) in enumerate(metrics_to_show.items()):
-        with cols[i]:
-            with st.container(border=True):
-                current_value = latest_data[col_name].iloc[0] if not latest_data.empty else 0
-                prev_month_value = prev_month_data[col_name].iloc[0] if not prev_month_data.empty else None
-                mom_delta_str = "---"
-                if prev_month_value is not None and prev_month_value != 0:
-                    mom_pct = ((current_value - prev_month_value) / abs(prev_month_value)) * 100
-                    mom_delta_str = f"{mom_pct:+.1f}%"
-                prev_year_value = prev_year_data[col_name].iloc[0] if not prev_year_data.empty else None
-                yoy_delta_str = "---"
-                if prev_year_value is not None and prev_year_value != 0:
-                    yoy_pct = ((current_value - prev_year_value) / abs(prev_year_value)) * 100
-                    yoy_delta_str = f"{yoy_pct:+.1f}%"
-                st.metric(label=f"{latest_date.strftime('%Y년 %m월')} {metric_label}", value=f"${current_value/1e9:.2f}B")
-                st.markdown(f"""
-                <div style="font-size: 0.8rem; text-align: right; color: #555;">
-                    전월 대비: <b>{mom_delta_str}</b><br>
-                    전년 대비: <b>{yoy_delta_str}</b>
-                </div>
-                """, unsafe_allow_html=True)
+    latest_trade_date = display_df.dropna(subset=['export_amount'])['Date'].max()
+    if pd.notna(latest_trade_date):
+        latest_data = display_df[display_df['Date'] == latest_trade_date]
+        
+        prev_month_date = latest_trade_date - pd.DateOffset(months=1)
+        prev_year_date = latest_trade_date - pd.DateOffset(years=1)
+        
+        prev_month_data = display_df[display_df['Date'] == prev_month_date]
+        prev_year_data = display_df[display_df['Date'] == prev_year_date]
+        metrics_to_show = {'수출액': 'export_amount', '수입액': 'import_amount', '무역수지': 'trade_balance'}
+        cols = st.columns(3)
+        for i, (metric_label, col_name) in enumerate(metrics_to_show.items()):
+            with cols[i]:
+                with st.container(border=True):
+                    current_value = latest_data[col_name].iloc[0] if not latest_data.empty else 0
+                    prev_month_value = prev_month_data[col_name].iloc[0] if not prev_month_data.empty else None
+                    mom_delta_str = "---"
+                    if prev_month_value is not None and prev_month_value != 0:
+                        mom_pct = ((current_value - prev_month_value) / abs(prev_month_value)) * 100
+                        mom_delta_str = f"{mom_pct:+.1f}%"
+                    prev_year_value = prev_year_data[col_name].iloc[0] if not prev_year_data.empty else None
+                    yoy_delta_str = "---"
+                    if prev_year_value is not None and prev_year_value != 0:
+                        yoy_pct = ((current_value - prev_year_value) / abs(prev_year_value)) * 100
+                        yoy_delta_str = f"{yoy_pct:+.1f}%"
+                    st.metric(label=f"{latest_trade_date.strftime('%Y년 %m월')} {metric_label}", value=f"${current_value/1e9:.2f}B")
+                    st.markdown(f"""
+                    <div style="font-size: 0.8rem; text-align: right; color: #555;">
+                        전월 대비: <b>{mom_delta_str}</b><br>
+                        전년 대비: <b>{yoy_delta_str}</b>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # --- 차트 생성 ---
 if not display_df.empty:
-    zoom = alt.selection_interval(bind='scales', encodings=['x'])
+    # [모바일] 터치(클릭)에 반응하는 선택 도구로 변경
+    nearest_selection = alt.selection_point(encodings=['x'], nearest=True, empty=False)
+
     base_col_names = ['export_amount', 'import_amount', 'trade_balance']
     if st.session_state.is_12m_trailing:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_trailing_12m_yoy_growth' for c in base_col_names]
@@ -90,8 +115,6 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
-
-    nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
 
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
@@ -104,7 +127,7 @@ if not display_df.empty:
         ]
     ).add_params(nearest_selection)
 
-    kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
+    kospi_line = alt.Chart(display_df.dropna(subset=['kospi_price'])).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=None),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
     )
@@ -114,14 +137,12 @@ if not display_df.empty:
 
     kospi_chart = alt.layer(
         kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer
-    ).transform_filter(
-        zoom
     ).properties(
         height=120,
         title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
     )
 
-    trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
+    trade_melted_df = display_df.dropna(subset=cols_to_use).melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
     trade_melted_df['지표'] = trade_melted_df['지표'].map(col_map)
 
@@ -166,11 +187,8 @@ if not display_df.empty:
         y='independent'
     )
 
-    # [수정] 잘못된 'align' 파라미터를 삭제했습니다.
     final_combined_chart = alt.vconcat(
         kospi_chart, trade_chart, spacing=50, bounds='flush'
-    ).add_params(
-        zoom
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
@@ -183,34 +201,69 @@ if not display_df.empty:
     st.altair_chart(final_combined_chart, use_container_width=True)
 
 # --- 컨트롤 패널 UI ---
-st.markdown("---")
-st.markdown("##### ⚙️ 데이터 보기 옵션")
-control_cols = st.columns(3)
-with control_cols[0]:
-    selected_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country))
+# [모바일] 컨트롤을 expander 안에 넣어 UI를 정리합니다.
+with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
+    selected_country = st.selectbox(
+        '**국가 선택**', 
+        options=['총합', '미국', '중국'], 
+        index=['총합', '미국', '중국'].index(st.session_state.selected_country)
+    )
     if selected_country != st.session_state.selected_country:
         st.session_state.selected_country = selected_country
         st.rerun()
-with control_cols[1]:
+
     options_12m = ['월별', '12개월 누적']
-    selected_12m = st.radio('**데이터 형태 (무역)**', options_12m, index=1 if st.session_state.is_12m_trailing else 0, horizontal=True)
+    selected_12m = st.radio(
+        '**데이터 형태 (무역)**', 
+        options_12m, 
+        index=1 if st.session_state.is_12m_trailing else 0,
+        horizontal=True
+    )
     new_is_12m_trailing = (selected_12m == '12개월 누적')
     if new_is_12m_trailing != st.session_state.is_12m_trailing:
         st.session_state.is_12m_trailing = new_is_12m_trailing
         st.rerun()
-with control_cols[2]:
+
     options_yoy = ['금액', 'YoY']
-    selected_yoy = st.radio('**표시 단위 (무역)**', options_yoy, index=1 if st.session_state.show_yoy_growth else 0, horizontal=True)
+    selected_yoy = st.radio(
+        '**표시 단위 (무역)**', 
+        options_yoy, 
+        index=1 if st.session_state.show_yoy_growth else 0,
+        horizontal=True
+    )
     new_show_yoy_growth = (selected_yoy == 'YoY')
     if new_show_yoy_growth != st.session_state.show_yoy_growth:
         st.session_state.show_yoy_growth = new_show_yoy_growth
         st.rerun()
 
+# [모바일] 기간 선택 버튼 UI
+st.markdown("---")
+st.markdown('**기간 설정**')
+period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체 기간': 99}
+period_cols = st.columns(4)
+col_idx = 0
+for label, offset_years in period_options.items():
+    col = period_cols[col_idx % 4]
+    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
+    if col.button(label, key=f'period_{label}', use_container_width=True, type=btn_type):
+        end_date = trade_data_processed['Date'].max()
+        if label == '전체 기간':
+            start_date = trade_data_processed['Date'].min()
+        else:
+            start_date = end_date - pd.DateOffset(years=offset_years)
+        
+        st.session_state.start_date = start_date
+        st.session_state.end_date = end_date
+        st.session_state.selected_period = label
+        st.rerun()
+    col_idx += 1
+
+
+# [모바일] 사용법 안내 문구 수정
 st.info("""
 **💡 차트 사용법**
-- **확대/축소 (Zoom)**: 차트 위에 마우스 커서를 놓고 **마우스 휠**을 위/아래로 움직여 보세요.
-- **이동 (Pan)**: 차트를 **클릭 후 드래그**하여 원하는 구간으로 이동할 수 있습니다.
-- **초기화**: 차트 아무 곳이나 **더블 클릭**하면 전체 기간으로 돌아갑니다.
+- **기간 변경**: 상단의 **기간 설정** 버튼을 눌러 원하는 기간을 선택하세요.
+- **상세 정보**: 차트 위를 터치(클릭)하면 해당 시점의 상세 데이터를 볼 수 있습니다.
 """)
 
 # --- 데이터 출처 정보 ---
