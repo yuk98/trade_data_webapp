@@ -136,23 +136,13 @@ class Dashboard:
             height=280, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
-        # [수정] TypeError를 해결하기 위해 차트 결합 로직을 수정합니다.
-        # 각 차트에 툴팁을 개별적으로 적용하는 대신, 전체 차트에 툴팁을 제공하는 투명한 레이어를 마지막에 겹칩니다.
-        final_chart = alt.vconcat(
+        final_chart_with_tooltip = alt.vconcat(
             kospi_chart,
             trade_chart,
             spacing=30
-        ).properties(
-            bounds='flush'
-        ).resolve_legend(
-            color="independent"
-        ).configure_view(
-            stroke=None
-        )
-        
-        # 툴팁을 제공하는 투명한 레이어
-        tooltip_layer = alt.Chart(df).mark_rect(color='transparent').encode(
-            x='Date:T',
+        ).add_params(
+            nearest
+        ).encode(
             tooltip=[
                 alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
                 alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
@@ -160,9 +150,15 @@ class Dashboard:
                 alt.Tooltip(import_col, title="수입", format='$,.2f'),
                 alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
             ]
-        ).add_params(nearest)
+        ).properties(
+            bounds='flush'
+        ).resolve_legend(
+            color="independent"
+        ).configure_view(
+            stroke=None
+        )
 
-        st.altair_chart(alt.layer(final_chart, tooltip_layer), use_container_width=True)
+        st.altair_chart(final_chart_with_tooltip, use_container_width=True)
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
