@@ -9,7 +9,7 @@ from typing import Tuple
 # 예시: import data_handler
 
 # --- 임시 data_handler 모듈 (실행 테스트용) ---
-# 실제 환경에서는 이 부분을 지우고 `import data_handler`를 사용하세요.
+# [수정] 데이터 로딩과 처리를 분리하여, 여기서는 원본 데이터만 생성합니다.
 class DataHandlerMock:
     def load_trade_data(self):
         # 샘플 데이터 생성
@@ -20,7 +20,6 @@ class DataHandlerMock:
                 export = 1e9 * (50 + 10 * (1 + 0.5 * abs((date.month - 6.5)))) + (hash(country) % 10) * 1e8
                 imports = 1e9 * (45 + 8 * (1 + 0.4 * abs((date.month - 6.5)))) + (hash(country) % 8) * 1e8
                 
-                # 데이터에 약간의 노이즈 추가
                 export *= (1 + (pd.Timestamp.now().microsecond % 1000) / 10000 - 0.05)
                 imports *= (1 + (pd.Timestamp.now().microsecond % 1000) / 10000 - 0.05)
                 
@@ -33,20 +32,7 @@ class DataHandlerMock:
 
         df = pd.DataFrame(data)
         df['trade_balance'] = df['export_amount'] - df['import_amount']
-        
-        # [수정] 12개월 누적 및 YoY 계산 로직 수정
-        # df.update()는 새 열을 추가하지 못하므로, 처리된 DataFrame들을 리스트에 모아 concat으로 합칩니다.
-        processed_dataframes = []
-        for country in df['country_name'].unique():
-            country_df = df[df['country_name'] == country].sort_values('Date').copy()
-            for col in ['export_amount', 'import_amount', 'trade_balance']:
-                country_df[f'{col}_trailing_12m'] = country_df[col].rolling(window=12).sum()
-                country_df[f'{col}_yoy_growth'] = country_df[col].pct_change(periods=12) * 100
-                country_df[f'{col}_trailing_12m_yoy_growth'] = country_df[f'{col}_trailing_12m'].pct_change(periods=12) * 100
-            processed_dataframes.append(country_df)
-        
-        # 처리된 모든 데이터프레임을 하나로 합쳐서 반환
-        return pd.concat(processed_dataframes)
+        return df
 
     def get_and_update_kospi_data(self):
         # 샘플 KOSPI 데이터 생성
@@ -77,7 +63,6 @@ class Dashboard:
     """
 
     def __init__(self):
-        # 페이지 아이콘을 보다 일반적인 것으로 변경하여 렌더링 오류 가능성을 줄입니다.
         st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📊")
         if 'init_done' not in st.session_state:
             self._initialize_session_state()
@@ -105,7 +90,6 @@ class Dashboard:
 
     def _render_header_and_metrics(self, df: pd.DataFrame):
         """페이지 제목과 주요 메트릭 카드를 렌더링합니다."""
-        # 제목에서 이모지를 제거하여 호환성을 높입니다.
         st.title('무역 데이터 & KOSPI 200 대시보드')
         
         latest_trade_date = df.dropna(subset=['export_amount'])['Date'].max()
@@ -219,7 +203,6 @@ class Dashboard:
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
-        # 확장 패널(expander) 제목에서 이모지를 제거합니다.
         with st.expander("데이터 보기 및 기간 설정", expanded=True):
             cols = st.columns([1, 1, 2])
             with cols[0]:
@@ -261,14 +244,25 @@ class Dashboard:
     def run(self):
         """대시보드 애플리케이션을 실행합니다."""
         with st.spinner('데이터를 불러오는 중입니다...'):
-            trade_data, kospi_data, kospi_msg = self._load_and_prepare_data()
+            trade_data_base, kospi_data, kospi_msg = self._load_and_prepare_data()
 
-        if trade_data is None or kospi_data is None:
+        if trade_data_base is None or kospi_data is None:
             st.error("데이터 로딩에 실패했습니다. 파일을 확인하거나 인터넷 연결을 점검해주세요.")
             if kospi_msg: st.warning(kospi_msg)
             return
         
-        min_date_for_controls = trade_data['Date'].min()
+        # [수정] 데이터 로딩 후, 메인 로직에서 파생 변수를 계산합니다.
+        processed_dataframes = []
+        for country in trade_data_base['country_name'].unique():
+            country_df = trade_data_base[trade_data_base['country_name'] == country].sort_values('Date').copy()
+            for col in ['export_amount', 'import_amount', 'trade_balance']:
+                country_df[f'{col}_trailing_12m'] = country_df[col].rolling(window=12).sum()
+                country_df[f'{col}_yoy_growth'] = country_df[col].pct_change(periods=12) * 100
+                country_df[f'{col}_trailing_12m_yoy_growth'] = country_df[f'{col}_trailing_12m'].pct_change(periods=12) * 100
+            processed_dataframes.append(country_df)
+        trade_data_processed = pd.concat(processed_dataframes)
+        
+        min_date_for_controls = trade_data_processed['Date'].min()
         max_date_for_controls = kospi_data['Date'].max()
         
         if 'start_date_input' not in st.session_state:
@@ -278,7 +272,7 @@ class Dashboard:
 
         self._render_controls(min_date_for_controls, max_date_for_controls)
 
-        trade_country_filtered = trade_data[trade_data['country_name'] == st.session_state.selected_country].copy()
+        trade_country_filtered = trade_data_processed[trade_data_processed['country_name'] == st.session_state.selected_country].copy()
         
         full_display_df = pd.merge(trade_country_filtered, kospi_data, on='Date', how='outer').sort_values(by='Date')
         
@@ -294,7 +288,6 @@ class Dashboard:
         else:
             self._render_charts(display_df_filtered)
         
-        # 정보 상자(info box)에서 이모지를 제거합니다.
         st.info("""
         **차트 사용법**
         - **기간 변경**: 하단의 '데이터 보기 및 기간 설정'에서 **기간 버튼**을 누르거나, **시작일**과 **종료일**을 직접 선택하세요.
