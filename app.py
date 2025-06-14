@@ -87,6 +87,8 @@ if 'start_date' not in st.session_state:
     st.session_state.start_date = trade_data_processed['year_month'].min()
 if 'end_date' not in st.session_state:
     st.session_state.end_date = trade_data_processed['year_month'].max()
+if 'selected_country' not in st.session_state: # Initialize selected_country in session state
+    st.session_state.selected_country = '총합'
 
 # Custom CSS for button styling based on selection
 st.markdown("""
@@ -103,9 +105,8 @@ div.stButton > button:hover {
     border-color: #007bff; /* Hover border */
     color: #007bff; /* Hover text color */
 }
-/* This custom class is added via JavaScript/HTML, not directly by st.button */
-/* For a true "grayed out" effect, more advanced techniques (components or JS) are needed. */
-/* The current approach relies on Streamlit's default re-rendering. */
+/* For a true "grayed out" effect for active buttons, more advanced techniques (components or JS) are needed. */
+/* The current approach relies on Streamlit's default re-rendering and user guidance. */
 </style>
 """, unsafe_allow_html=True)
 
@@ -131,28 +132,25 @@ period_options = {
     '전체 기간': None # Special case for full range
 }
 
-# Create columns for period buttons
 period_buttons_cols = st.columns(len(period_options))
 
 for i, (label, offset_years) in enumerate(period_options.items()):
     with period_buttons_cols[i]:
-        # Using a direct Streamlit button. The "active" styling (gray background)
-        # is difficult with native Streamlit buttons without custom components.
-        # We'll rely on the functional update and the general style.
+        # Buttons trigger update_period function which sets session state and reruns
         if st.button(label, key=f'{label}_button', use_container_width=True):
             update_period(label, offset_years)
 
 
 # --- Altair Chart ---
 # Filter data based on selected country and date range FIRST
+# Use st.session_state.selected_country directly
 filtered_df_for_chart = trade_data_processed[
-    (trade_data_processed['country_name'] == selected_country) &
+    (trade_data_processed['country_name'] == st.session_state.selected_country) &
     (trade_data_processed['year_month'] >= st.session_state.start_date) &
     (trade_data_processed['year_month'] <= st.session_state.end_date)
 ].copy()
 
 # Determine which column names to use based on transformation selections
-# This creates dynamic column names like 'export_amount_yoy_growth' or 'trade_balance_trailing_12m'
 chart_export_col = 'export_amount'
 chart_import_col = 'import_amount'
 chart_trade_balance_col = 'trade_balance'
@@ -220,7 +218,7 @@ final_chart = alt.layer(
 ).resolve_scale(
     y='independent' # Key for independent Y-axes
 ).properties(
-    title=f'{selected_country} - 무역 데이터 추이'
+    title=f'{st.session_state.selected_country} - 무역 데이터 추이'
 ).interactive(
     # This enables the brush selection (transparent box) on the X-axis
     # and also general zoom/pan functionality.
@@ -235,24 +233,30 @@ st.subheader('데이터 보기 옵션:')
 col1_after_chart, col2_after_chart, col3_after_chart = st.columns([0.3, 0.3, 0.4])
 
 with col1_after_chart:
+    # Use st.session_state for the toggle button's value
     if st.button('12개월 누적' if not st.session_state.is_12m_trailing else '월별 데이터', key='12m_toggle_bottom'):
         st.session_state.is_12m_trailing = not st.session_state.is_12m_trailing
+        st.rerun() # Rerun to apply transformation immediately
 with col2_after_chart:
-    st.session_state.show_yoy_growth = st.checkbox('YoY 성장률', value=st.session_state.show_yoy_growth, key='yoy_toggle_bottom')
+    # Use st.session_state for the checkbox's value
+    new_yoy_state = st.checkbox('YoY 성장률', value=st.session_state.show_yoy_growth, key='yoy_toggle_bottom')
+    if new_yoy_state != st.session_state.show_yoy_growth:
+        st.session_state.show_yoy_growth = new_yoy_state
+        st.rerun() # Rerun to apply transformation immediately
 with col3_after_chart:
     # Country selection dropdown - moved here as per new request
     country_selection_list_bottom = ['미국', '중국', '총합']
-    current_country_index = country_selection_list_bottom.index(selected_country) if selected_country in country_selection_list_bottom else 0
-    selected_country_bottom = st.selectbox(
+    current_country_index = country_selection_list_bottom.index(st.session_state.selected_country) if st.session_state.selected_country in country_selection_list_bottom else 0
+    
+    new_selected_country = st.selectbox(
         '국가 선택:',
         options=country_selection_list_bottom,
-        index=current_country_index, # Default to the current selected country
+        index=current_country_index,
         key='country_select_bottom'
     )
     # If the user selects a country from this dropdown, update the main selected_country.
-    # This will trigger a rerun.
-    if selected_country_bottom != selected_country:
-        st.session_state.selected_country = selected_country_bottom # Store in session state if you want to remember across reruns
+    if new_selected_country != st.session_state.selected_country:
+        st.session_state.selected_country = new_selected_country
         st.rerun() # Force rerun to update chart with new country
 
 
