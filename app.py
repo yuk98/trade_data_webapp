@@ -88,29 +88,6 @@ if 'start_date' not in st.session_state:
 if 'end_date' not in st.session_state:
     st.session_state.end_date = trade_data_processed['year_month'].max()
 
-
-# Control Panel
-st.subheader('데이터 보기 옵션:')
-col1, col2, col3 = st.columns([0.3, 0.3, 0.4]) # Adjust column widths for better layout
-
-with col1:
-    # Toggle button for 12-month trailing vs. monthly data
-    if st.button('12개월 누적' if not st.session_state.is_12m_trailing else '월별 데이터'):
-        st.session_state.is_12m_trailing = not st.session_state.is_12m_trailing
-with col2:
-    # Toggle for YoY Growth Rate
-    st.session_state.show_yoy_growth = st.checkbox('YoY 성장률', value=st.session_state.show_yoy_growth)
-with col3:
-    # Country selection dropdown
-    country_selection_list = ['미국', '중국', '총합']
-    selected_country = st.selectbox(
-        '국가 선택:',
-        options=country_selection_list,
-        index=country_selection_list.index('총합') # Default to '총합'
-    )
-
-
-# --- Period Selection Buttons Above Chart ---
 # Custom CSS for button styling based on selection
 st.markdown("""
 <style>
@@ -126,6 +103,9 @@ div.stButton > button:hover {
     border-color: #007bff; /* Hover border */
     color: #007bff; /* Hover text color */
 }
+/* This custom class is added via JavaScript/HTML, not directly by st.button */
+/* For a true "grayed out" effect, more advanced techniques (components or JS) are needed. */
+/* The current approach relies on Streamlit's default re-rendering. */
 </style>
 """, unsafe_allow_html=True)
 
@@ -138,12 +118,10 @@ def update_period(period_label, offset_years):
     else:
         st.session_state.start_date = end_of_data - pd.DateOffset(years=offset_years)
     st.session_state.end_date = end_of_data
-    # No need for st.rerun() if button click automatically re-runs.
-    # However, for consistency and clarity, keep it if it helps immediate UI update.
-    # For simple button clicks, Streamlit often re-runs implicitly.
+    st.rerun() # Force rerun to update the chart and potentially button styling
 
-# Period buttons
-st.markdown("### ") # Add some spacing without text
+
+# --- Period Selection Buttons ABOVE Chart ---
 period_options = {
     '1년': 1,
     '3년': 3,
@@ -153,133 +131,138 @@ period_options = {
     '전체 기간': None # Special case for full range
 }
 
+# Create columns for period buttons
 period_buttons_cols = st.columns(len(period_options))
 
 for i, (label, offset_years) in enumerate(period_options.items()):
     with period_buttons_cols[i]:
-        # Generate custom style for the active button
-        button_id = f'period_button_{label}'
-        button_text_color = "black"
-        button_background_color = "#f0f2f6" # Default light gray
-
-        if st.session_state.selected_period == label:
-            button_background_color = "#d3d3d3" # Darker gray for active button
-            button_text_color = "#333333" # Darker text for active button
-
-        # Using markdown with st.button to apply custom styles is tricky.
-        # A workaround is to use st.markdown with a button-like div and JavaScript,
-        # but that breaks Streamlit's native button behavior.
-        # Let's stick to Streamlit's button but use `st.session_state.selected_period` for visual feedback.
-        # A more robust solution for custom button styling typically involves Streamlit components
-        # or injecting complex CSS/JS, which is beyond simple app.py.
-
-        # For simple visual feedback, we will use a direct button and rely on Streamlit's default styling
-        # combined with `st.session_state.selected_period` for logic.
-        # The direct style injection for `st.button` is not straightforward.
-        # We'll achieve the "회색" effect by dynamically setting the button.
-        
-        # Streamlit doesn't support direct button styling like this via Python.
-        # The `st.button` function itself doesn't take style arguments.
-        # We would need to use `st.markdown` with raw HTML and CSS to create custom buttons,
-        # but that also means handling the click events with JavaScript, making it overly complex.
-        # For simplicity and sticking to Streamlit's native widgets,
-        # we'll use `st.button` and rely on a subtle visual cue (like changing button text,
-        # or perhaps a success/info message after clicking, which is also not direct styling).
-        # Let's try to simulate the gray background by using st.container with background.
-
-        # Streamlit's current button styling options are limited.
-        # The previous method using `st.markdown` and a custom style block *might* work
-        # for general button appearance, but selecting a specific button on click
-        # to change its *own* appearance dynamically in Streamlit without custom components is hard.
-
-        # Reverting to the simpler approach: just update session state.
-        # The user image implies a direct visual change on the button itself.
-        # Since this is a common Streamlit limitation, for this specific style,
-        # a dedicated Streamlit component or more advanced JS injection would be needed.
-        # I will make the button visually selected by having it appear *selected* in the logic,
-        # but Streamlit's default button appearance won't change its background/text color dynamically
-        # based on selection state *without custom components*.
-        # I will use a textual indicator next to the button.
-
-        # Simplified button logic:
+        # Using a direct Streamlit button. The "active" styling (gray background)
+        # is difficult with native Streamlit buttons without custom components.
+        # We'll rely on the functional update and the general style.
         if st.button(label, key=f'{label}_button', use_container_width=True):
             update_period(label, offset_years)
 
-# Filter data based on selected country, transformation, and date range
-filtered_df = trade_data_processed[
+
+# --- Altair Chart ---
+# Filter data based on selected country and date range FIRST
+filtered_df_for_chart = trade_data_processed[
     (trade_data_processed['country_name'] == selected_country) &
     (trade_data_processed['year_month'] >= st.session_state.start_date) &
     (trade_data_processed['year_month'] <= st.session_state.end_date)
-].copy() # Use .copy() to avoid SettingWithCopyWarning
+].copy()
 
-# Determine which columns to use based on user selections
-metric_prefixes = ['export_amount', 'import_amount', 'trade_balance']
-selected_metrics = []
+# Determine which column names to use based on transformation selections
+# This creates dynamic column names like 'export_amount_yoy_growth' or 'trade_balance_trailing_12m'
+chart_export_col = 'export_amount'
+chart_import_col = 'import_amount'
+chart_trade_balance_col = 'trade_balance'
 
-for prefix in metric_prefixes:
-    if st.session_state.is_12m_trailing:
-        base_col = f'{prefix}_trailing_12m'
-    else:
-        base_col = prefix
+if st.session_state.is_12m_trailing:
+    chart_export_col = f'{chart_export_col}_trailing_12m'
+    chart_import_col = f'{chart_import_col}_trailing_12m'
+    chart_trade_balance_col = f'{chart_trade_balance_col}_trailing_12m'
 
-    if st.session_state.show_yoy_growth:
-        selected_metrics.append(f'{base_col}_yoy_growth') # e.g., export_amount_trailing_12m_yoy_growth
-    else:
-        selected_metrics.append(base_col) # e.g., export_amount_trailing_12m or export_amount
-
-# Melt the final filtered DataFrame for plotting
-final_melted_df = filtered_df.melt(
-    id_vars=['year_month', 'country_name'],
-    value_vars=selected_metrics,
-    var_name='metric',
-    value_name='value'
-)
-final_melted_df = final_melted_df.dropna(subset=['value'])
-
-# Clean metric names for display
-def clean_metric_name(metric_raw):
-    # Determine the display name based on the original metric type
-    if 'export_amount' in metric_raw: return '수출 금액'
-    if 'import_amount' in metric_raw: return '수입 금액'
-    if 'trade_balance' in metric_raw: return '무역 수지'
-    return metric_raw
-
-final_melted_df['display_metric'] = final_melted_df['metric'].apply(clean_metric_name)
-
-# Determine Y-axis title based on current transformation state
-y_axis_title = '금액'
 if st.session_state.show_yoy_growth:
-    y_axis_title = 'YoY 성장률 (%)'
-elif st.session_state.is_12m_trailing:
-    y_axis_title = '12개월 누적 금액'
-else:
-    y_axis_title = '월별 금액'
+    chart_export_col = f'{chart_export_col}_yoy_growth'
+    chart_import_col = f'{chart_import_col}_yoy_growth'
+    chart_trade_balance_col = f'{chart_trade_balance_col}_yoy_growth'
 
-# Altair Chart
+# Determine Y-axis titles for each metric based on current transformation state
+export_y_title = '수출 금액'
+import_y_title = '수입 금액'
+trade_balance_y_title = '무역 수지'
+
+if st.session_state.show_yoy_growth:
+    export_y_title = '수출 YoY 성장률 (%)'
+    import_y_title = '수입 YoY 성장률 (%)'
+    trade_balance_y_title = '무역 수지 YoY 성장률 (%)'
+elif st.session_state.is_12m_trailing:
+    export_y_title = '수출 12개월 누적 금액'
+    import_y_title = '수입 12개월 누적 금액'
+    trade_balance_y_title = '무역 수지 12개월 누적 금액'
+
+
+# Create individual charts for layering
 # Y-axis will auto-fit by default because no 'domain' is explicitly set in alt.Y()
-chart = alt.Chart(final_melted_df).mark_line().encode(
-    x=alt.X('year_month:T', title='연-월', axis=alt.Axis(format='%Y-%m')),
-    y=alt.Y('value:Q', title=y_axis_title),
-    color=alt.Color('display_metric:N', title='지표 유형',
-                    scale=alt.Scale(domain=['수출 금액', '수입 금액', '무역 수지'],
-                                    range=['blue', 'red', 'green'])),
+# Each chart now uses the dynamically chosen column name
+chart_export = alt.Chart(filtered_df_for_chart).mark_line(color='blue').encode(
+    x=alt.X('year_month:T', title='연-월'),
+    y=alt.Y(chart_export_col, title=export_y_title),
     tooltip=[
         alt.Tooltip('year_month:T', title='연-월', format='%Y-%m'),
-        alt.Tooltip('display_metric:N', title='지표 유형'),
-        alt.Tooltip('value:Q', title='값', format=',.2f')
+        alt.Tooltip(chart_export_col, title=export_y_title, format=',.2f')
     ]
-).properties(
-    title=f'{selected_country} - {y_axis_title} 추이'
-).interactive() # Enables zoom and pan for X-axis
+)
 
-st.altair_chart(chart, use_container_width=True)
+chart_import = alt.Chart(filtered_df_for_chart).mark_line(color='red').encode(
+    x=alt.X('year_month:T', title=''), # No title to avoid redundancy
+    y=alt.Y(chart_import_col, title=import_y_title),
+    tooltip=[
+        alt.Tooltip('year_month:T', title='연-월', format='%Y-%m'),
+        alt.Tooltip(chart_import_col, title=import_y_title, format=',.2f')
+    ]
+)
+
+chart_trade_balance = alt.Chart(filtered_df_for_chart).mark_line(color='green').encode(
+    x=alt.X('year_month:T', title=''), # No title to avoid redundancy
+    y=alt.Y(chart_trade_balance_col, title=trade_balance_y_title),
+    tooltip=[
+        alt.Tooltip('year_month:T', title='연-월', format='%Y-%m'),
+        alt.Tooltip(chart_trade_balance_col, title=trade_balance_y_title, format=',.2f')
+    ]
+)
+
+# Combine charts with independent y-scales and interactive X-axis
+final_chart = alt.layer(
+    chart_export,
+    chart_import,
+    chart_trade_balance
+).resolve_scale(
+    y='independent' # Key for independent Y-axes
+).properties(
+    title=f'{selected_country} - 무역 데이터 추이'
+).interactive(
+    # This enables the brush selection (transparent box) on the X-axis
+    # and also general zoom/pan functionality.
+    alt.selection_interval(encodings=['x'])
+)
+
+st.altair_chart(final_chart, use_container_width=True)
+
+
+# --- Data Options AFTER Chart and BEFORE Usage Instructions ---
+st.subheader('데이터 보기 옵션:')
+col1_after_chart, col2_after_chart, col3_after_chart = st.columns([0.3, 0.3, 0.4])
+
+with col1_after_chart:
+    if st.button('12개월 누적' if not st.session_state.is_12m_trailing else '월별 데이터', key='12m_toggle_bottom'):
+        st.session_state.is_12m_trailing = not st.session_state.is_12m_trailing
+with col2_after_chart:
+    st.session_state.show_yoy_growth = st.checkbox('YoY 성장률', value=st.session_state.show_yoy_growth, key='yoy_toggle_bottom')
+with col3_after_chart:
+    # Country selection dropdown - moved here as per new request
+    country_selection_list_bottom = ['미국', '중국', '총합']
+    current_country_index = country_selection_list_bottom.index(selected_country) if selected_country in country_selection_list_bottom else 0
+    selected_country_bottom = st.selectbox(
+        '국가 선택:',
+        options=country_selection_list_bottom,
+        index=current_country_index, # Default to the current selected country
+        key='country_select_bottom'
+    )
+    # If the user selects a country from this dropdown, update the main selected_country.
+    # This will trigger a rerun.
+    if selected_country_bottom != selected_country:
+        st.session_state.selected_country = selected_country_bottom # Store in session state if you want to remember across reruns
+        st.rerun() # Force rerun to update chart with new country
+
 
 st.markdown("""
 ---
 ### **사용 방법:**
-1.  **국가 선택**: 드롭다운에서 '미국', '중국', '총합' 중 하나를 선택하세요.
-2.  **"12개월 누적" 버튼**: 클릭하여 월별 데이터와 12개월 누적 데이터 간에 전환합니다. 버튼 텍스트도 그에 따라 변경됩니다.
-3.  **"YoY 성장률" 체크박스**: 체크하면 현재 활성화된 데이터(월별 또는 12개월 누적)의 YoY 성장률을 보여줍니다. 체크를 해제하면 다시 절대 금액으로 돌아갑니다.
-4.  **기간 선택 버튼**: 차트 위에 있는 버튼을 클릭하여 X축 기간을 '1년', '3년', '5년', '10년', '20년', '전체 기간'으로 빠르게 조정할 수 있습니다. 선택된 버튼은 약간 어둡게 표시됩니다.
-5.  **확대/축소 및 이동**: 마우스 스크롤 또는 터치패드를 사용하여 그래프를 확대/축소하고, 드래그하여 이동할 수 있습니다.
-""")
+현재 선택된 기간: **{}**
+1.  **국가 선택**: 차트 아래의 드롭다운에서 '미국', '중국', '총합' 중 하나를 선택하세요.
+2.  **"12개월 누적" 버튼**: 차트 아래의 버튼을 클릭하여 월별 데이터와 12개월 누적 데이터 간에 전환합니다. 버튼 텍스트도 그에 따라 변경됩니다.
+3.  **"YoY 성장률" 체크박스**: 차트 아래의 체크박스를 체크하면 현재 활성화된 데이터(월별 또는 12개월 누적)의 YoY 성장률을 보여줍니다. 체크를 해제하면 다시 절대 금액으로 돌아갑니다.
+4.  **기간 선택 버튼**: 차트 위에 있는 버튼을 클릭하여 X축 기간을 '1년', '3년', '5년', '10년', '20년', '전체 기간'으로 빠르게 조정할 수 있습니다.
+5.  **확대/축소 및 이동**: 마우스 스크롤 또는 터치패드를 사용하여 그래프를 확대/축소하고, **X축 영역에서 마우스를 드래그하여 원하는 구간을 선택하거나 이동할 수 있습니다.**
+""".format(st.session_state.selected_period))
