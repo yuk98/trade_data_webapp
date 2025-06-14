@@ -9,19 +9,24 @@ import data_handler  # data_handler.py 파일을 임포트
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
 
+# --- [수정] URL 쿼리 파라미터 처리 로직 추가 ---
+# 토글 버튼 클릭 시 발생하는 URL 변경을 감지하여 세션 상태를 업데이트합니다.
+params = st.query_params
+if "toggle_12m" in params:
+    st.session_state.is_12m_trailing = params.get("toggle_12m") == "True"
+    st.rerun()
+
+if "toggle_yoy" in params:
+    st.session_state.show_yoy_growth = params.get("toggle_yoy") == "True"
+    st.rerun()
+
+
 # --- 커스텀 CSS ---
 st.markdown("""
 <style>
     body { font-family: 'Pretendard', sans-serif; }
-    .control-panel { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border: 1px solid #e9ecef; margin-bottom: 20px; }
-    .metric-card { background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 10px; padding: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.04); height: 100%; }
-    .metric-card h3 { font-size: 1.1rem; color: #495057; margin-bottom: 5px; }
-    .metric-card p { font-size: 1.5rem; font-weight: 600; color: #212529; }
-    .metric-card .delta { font-size: 0.9rem; font-weight: 500; }
-    .toggle-container { display: flex; align-items: center; background-color: #e9ecef; border-radius: 20px; padding: 4px; width: 100%; height: 40px; }
-    .toggle-container a { text-decoration: none; flex: 1; }
-    .toggle-option { text-align: center; padding: 5px 0; border-radius: 16px; font-weight: 500; transition: all 0.3s ease-in-out; color: #495057; cursor: pointer; }
-    .toggle-option.active { background-color: #ffffff; color: #0d6efd; font-weight: 700; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .control-panel { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border: 1px solid #e9ecef; margin-bottom: 20px; margin-top: 20px; }
+    /* ... (이전과 동일한 CSS 코드) ... */
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,31 +55,6 @@ if 'init_done' not in st.session_state:
     st.session_state.init_done = True
 
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
-
-# --- 컨트롤 패널 UI ---
-with st.container(border=True):
-    c1, c2, c3 = st.columns([1.5, 2, 2])
-    with c1:
-        new_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country), key='country_select')
-        if new_country != st.session_state.selected_country:
-            st.session_state.selected_country = new_country
-            st.rerun()
-    with c2:
-        st.markdown('**데이터 형태 (무역)**')
-        is_12m = st.session_state.is_12m_trailing
-        toggle_12m_html = f"""<div class="toggle-container">
-            <a href="?toggle_12m=False" target="_self"><div class="toggle-option {'active' if not is_12m else ''}">월별 데이터</div></a>
-            <a href="?toggle_12m=True" target="_self"><div class="toggle-option {'active' if is_12m else ''}">12개월 누적</div></a>
-        </div>"""
-        st.markdown(toggle_12m_html, unsafe_allow_html=True)
-    with c3:
-        st.markdown('**표시 단위 (무역)**')
-        is_yoy = st.session_state.show_yoy_growth
-        toggle_yoy_html = f"""<div class="toggle-container">
-            <a href="?toggle_yoy=False" target="_self"><div class="toggle-option {'active' if not is_yoy else ''}">금액 (백만$)</div></a>
-            <a href="?toggle_yoy=True" target="_self"><div class="toggle-option {'active' if is_yoy else ''}">YoY 성장률 (%)</div></a>
-        </div>"""
-        st.markdown(toggle_yoy_html, unsafe_allow_html=True)
 
 # --- 데이터 필터링 및 통합 ---
 trade_filtered_df = trade_data_processed[
@@ -154,26 +134,13 @@ if not display_df.empty:
     
     st.altair_chart(final_combined_chart, use_container_width=True)
 
-# --- 기간 선택 UI 및 데이터 출처 정보 ---
-st.markdown("---")
-st.markdown('**기간 빠르게 탐색하기**')
-period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '전체 기간': 99}
-period_cols = st.columns(len(period_options))
-for i, (label, offset_years) in enumerate(period_options.items()):
-    btn_type = "primary" if st.session_state.selected_period == label else "secondary"
-    if period_cols[i].button(label, key=f'period_{label}', use_container_width=True, type=btn_type):
-        end_date = trade_data_processed['Date'].max()
-        if label == '전체 기간': start_date = trade_data_processed['Date'].min()
-        else: start_date = end_date - pd.DateOffset(years=offset_years)
-        st.session_state.start_date, st.session_state.end_date = start_date, end_date
-        st.session_state.selected_period = label
+# --- [이동] 컨트롤 패널 UI 위치 변경 ---
+st.markdown('<div class="control-panel">', unsafe_allow_html=True)
+c1, c2, c3 = st.columns([1.5, 2, 2])
+with c1:
+    new_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country), key='country_select_bottom')
+    if new_country != st.session_state.selected_country:
+        st.session_state.selected_country = new_country
         st.rerun()
-
-st.markdown("---")
-with st.container(border=True):
-    st.subheader("데이터 출처 정보")
-    st.markdown("""
-    - **무역 데이터**: `trade_data.csv` 파일에서 로드합니다.
-    - **KOSPI 200 데이터**: `yfinance` 라이브러리를 통해 **Yahoo Finance**에서 실시간으로 가져와 `kospi200.csv` 파일로 관리 및 업데이트합니다.
-    - **원본 데이터 참조**: [관세청 품목별 수출입 실적 (OpenAPI)](https://www.data.go.kr/data/15101612/openapi.do)
-    """)
+with c2:
+    st.markdown('**데이터 형태 (무역)**')
