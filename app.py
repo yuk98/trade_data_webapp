@@ -22,11 +22,13 @@ if "toggle_yoy" in params:
 trade_data_processed = data_handler.load_trade_data()
 daily_kospi_data, kospi_status_msg = data_handler.get_and_update_kospi_data()
 
-# [수정] 무역 데이터 로딩 실패 시 에러 메시지 표시 및 앱 중단
+# [수정] 메시지가 있을 경우(오류/경고)에만 표시
+if kospi_status_msg:
+    st.warning(kospi_status_msg)
+
 if trade_data_processed is None:
     st.error("🚨 무역 데이터 파일('trade_data.csv') 로딩 실패: 스크립트와 동일한 폴더에 파일이 있는지 확인해주세요.")
     st.stop()
-
 if daily_kospi_data is None:
     st.error("🚨 KOSPI 데이터 로딩 또는 업데이트에 실패했습니다. 인터넷 연결을 확인해주세요.")
     st.stop()
@@ -51,8 +53,21 @@ trade_filtered_df = trade_data_processed[
     (trade_data_processed['Date'] >= st.session_state.start_date) &
     (trade_data_processed['Date'] <= st.session_state.end_date)
 ].copy()
-trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']).dt.to_period('M').dt.to_timestamp('S')
+# [수정] 무역 데이터의 'Date'를 월말 기준으로 통일
+trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
+
 display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left')
+
+# --- 메트릭 카드 UI ---
+if not display_df.empty:
+    latest_trade_data = display_df.dropna(subset=['export_amount']).sort_values('Date').iloc[-1]
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("최신 수출액", f"${latest_trade_data['export_amount']/1e9:.2f}B")
+    with m2:
+        st.metric("최신 수입액", f"${latest_trade_data['import_amount']/1e9:.2f}B")
+    with m3:
+        st.metric("최신 무역수지", f"${latest_trade_data['trade_balance']/1e9:.2f}B")
 
 # --- 차트 생성 ---
 if not display_df.empty:
@@ -84,10 +99,7 @@ if not display_df.empty:
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     kospi_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    
-    kospi_chart = alt.layer(
-        kospi_line, kospi_points, kospi_rule, tooltip_layer
-    ).properties(height=100, title="KOSPI 200 지수")
+    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_rule, tooltip_layer).properties(height=100, title="KOSPI 200 지수")
 
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
@@ -104,29 +116,15 @@ if not display_df.empty:
     trade_bar = trade_base_chart.mark_bar(opacity=0.7, clip=True).encode(x=alt.X('Date:T'), y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    
-    trade_chart = alt.layer(
-        trade_line, trade_bar, trade_rule, trade_points, tooltip_layer
-    ).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
+    trade_chart = alt.layer(trade_line, trade_bar, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
 
-    final_combined_chart = alt.vconcat(
-        kospi_chart,
-        trade_chart,
-        spacing=5
-    ).resolve_legend(
-        color="independent"
-    ).configure_view(
-        strokeWidth=0
-    ).configure_title(
-        fontSize=16, anchor="start", subtitleFontSize=12
-    )
-    
+    final_combined_chart = alt.vconcat(kospi_chart, trade_chart, spacing=5).resolve_legend(color="independent").configure_view(strokeWidth=0).configure_title(fontSize=16, anchor="start", subtitleFontSize=12)
     st.altair_chart(final_combined_chart, use_container_width=True)
 
 # --- 컨트롤 패널 UI ---
 st.markdown("---")
 st.markdown("##### ⚙️ 데이터 보기 옵션")
-control_cols = st.columns([1.5, 2, 2, 3.5])
+control_cols = st.columns(3)
 with control_cols[0]:
     new_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country), key='country_select_bottom')
     if new_country != st.session_state.selected_country:
