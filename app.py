@@ -100,18 +100,6 @@ class Dashboard:
             y=alt.Y('kospi_price:Q')
         ).transform_filter(nearest)
         
-        # 툴팁을 제공하는 투명한 레이어
-        tooltip_layer = base_chart.mark_rect(color='transparent').encode(
-            x='Date:T',
-            tooltip=[
-                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
-                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
-                alt.Tooltip(export_col, title="수출", format='$,.2f'),
-                alt.Tooltip(import_col, title="수입", format='$,.2f'),
-                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
-            ]
-        )
-        
         kospi_chart_base = base_chart.mark_line(color=KOSPI_COLOR).encode(
             x=alt.X('Date:T', title=None, axis=None),
             y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=4, grid=False))
@@ -119,10 +107,7 @@ class Dashboard:
         kospi_points = kospi_chart_base.mark_circle(size=60).encode(
             opacity=alt.condition(nearest, alt.value(1), alt.value(0))
         )
-        # [수정] KOSPI 차트에 툴팁 레이어를 포함시킵니다.
-        kospi_chart = alt.layer(
-            kospi_chart_base, kospi_points, kospi_horizontal_rule, vertical_rule, tooltip_layer
-        ).properties(
+        kospi_chart = alt.layer(kospi_chart_base, kospi_points, kospi_horizontal_rule, vertical_rule).properties(
             height=110, title=alt.TitleParams("KOSPI 200 지수", anchor='start', fontSize=16)
         )
         
@@ -147,14 +132,12 @@ class Dashboard:
             opacity=alt.condition(nearest, alt.value(1), alt.value(0))
         )
         
-        # [수정] 무역 차트에 툴팁 레이어를 포함시킵니다.
-        trade_chart = alt.layer(
-            line_chart, area_chart, trade_points, vertical_rule, tooltip_layer
-        ).resolve_scale(y='independent').properties(
+        trade_chart = alt.layer(line_chart, area_chart, trade_points, vertical_rule).resolve_scale(y='independent').properties(
             height=280, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
         # [수정] TypeError를 해결하기 위해 차트 결합 로직을 수정합니다.
+        # 각 차트에 툴팁을 개별적으로 적용하는 대신, 전체 차트에 툴팁을 제공하는 투명한 레이어를 마지막에 겹칩니다.
         final_chart = alt.vconcat(
             kospi_chart,
             trade_chart,
@@ -167,7 +150,19 @@ class Dashboard:
             stroke=None
         )
         
-        st.altair_chart(final_chart, use_container_width=True)
+        # 툴팁을 제공하는 투명한 레이어
+        tooltip_layer = alt.Chart(df).mark_rect(color='transparent').encode(
+            x='Date:T',
+            tooltip=[
+                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
+                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
+                alt.Tooltip(export_col, title="수출", format='$,.2f'),
+                alt.Tooltip(import_col, title="수입", format='$,.2f'),
+                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
+            ]
+        ).add_params(nearest)
+
+        st.altair_chart(alt.layer(final_chart, tooltip_layer), use_container_width=True)
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
