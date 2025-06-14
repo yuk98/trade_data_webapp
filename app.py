@@ -136,8 +136,8 @@ class Dashboard:
             height=280, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
-        # [수정] 툴팁을 제공하는 투명한 레이어를 마지막에 추가하는 방식으로 변경하여 오류 해결
-        final_chart = alt.vconcat(
+        # [수정] 차트 결합 및 툴팁 로직 수정
+        visual_charts = alt.vconcat(
             kospi_chart,
             trade_chart,
             spacing=30
@@ -145,11 +145,8 @@ class Dashboard:
             bounds='flush'
         ).resolve_legend(
             color="independent"
-        ).configure_view(
-            stroke=None
         )
-
-        # 툴팁을 위한 투명한 레이어 생성
+        
         tooltip_layer = alt.Chart(df).mark_rect(color='transparent').encode(
             x='Date:T',
             tooltip=[
@@ -161,8 +158,9 @@ class Dashboard:
             ]
         ).add_params(nearest)
         
-        # 최종 차트에 툴팁 레이어를 겹침
-        st.altair_chart(alt.layer(final_chart, tooltip_layer), use_container_width=True)
+        final_chart = alt.layer(visual_charts, tooltip_layer).configure_view(stroke=None)
+
+        st.altair_chart(final_chart, use_container_width=True)
 
     def _render_controls(self, min_date: datetime, max_date: datetime):
         """컨트롤 패널을 렌더링하고 사용자 입력을 처리합니다."""
