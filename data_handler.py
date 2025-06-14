@@ -16,12 +16,11 @@ def load_trade_data(filename="trade_data.csv"):
     try:
         trade_df = pd.read_csv(filename)
     except FileNotFoundError:
-        return None  # 파일이 없으면 None을 반환하여 로딩 실패를 알림
+        return None
 
     trade_df['year_month'] = pd.to_datetime(trade_df['year_month'])
     trade_df = trade_df.sort_values(by=['country_name', 'year_month']).reset_index(drop=True)
 
-    # 모든 경우의 수에 대한 데이터 컬럼을 미리 계산
     for col in ['export_amount', 'import_amount', 'trade_balance']:
         trade_df[f'{col}_trailing_12m'] = trade_df.groupby('country_name')[col].rolling(window=12, min_periods=12).sum().reset_index(level=0, drop=True)
         trade_df[f'{col}_yoy_growth'] = trade_df.groupby('country_name')[col].pct_change(periods=12) * 100
@@ -34,9 +33,7 @@ def load_trade_data(filename="trade_data.csv"):
 def get_and_update_kospi_data(filename="kospi200.csv"):
     """
     KOSPI 200 데이터를 관리하는 함수.
-    파일이 없으면 전체 데이터를 다운로드하여 새로 생성하고,
-    파일이 있으면 최신 데이터만 다운로드하여 업데이트합니다.
-    데이터프레임과 상태 메시지를 튜플로 반환합니다.
+    yfinance에서 데이터를 받을 때마다 인덱스를 리셋하여 'Date' 컬럼을 보장합니다.
     """
     today = pd.Timestamp.now().strftime('%Y-%m-%d')
     ticker = yf.Ticker("^KS200")
@@ -44,10 +41,13 @@ def get_and_update_kospi_data(filename="kospi200.csv"):
     if not os.path.exists(filename):
         status_message = f"'{filename}' 파일을 찾을 수 없어 2000년부터 현재까지 전체 데이터를 다운로드합니다..."
         try:
-            hist_daily = ticker.history(start='2000-01-01', end=today, interval="1d")
+            # .reset_index()를 추가하여 'Date'를 인덱스에서 컬럼으로 변환
+            hist_daily = ticker.history(start='2000-01-01', end=today, interval="1d").reset_index()
             if hist_daily.empty:
                 return None, "KOSPI 데이터 다운로드에 실패했습니다. 티커를 확인해주세요."
-            hist_daily.to_csv(filename)
+            
+            # CSV 저장 시 불필요한 인덱스 컬럼이 생기지 않도록 index=False 추가
+            hist_daily.to_csv(filename, index=False)
             return hist_daily, f"{status_message}\n\nKOSPI 데이터 다운로드 및 파일 생성 완료!"
         except Exception as e:
             return None, f"KOSPI 데이터 다운로드 중 오류 발생: {e}"
@@ -60,10 +60,13 @@ def get_and_update_kospi_data(filename="kospi200.csv"):
         status_message = f"기존 KOSPI 데이터가 최신이 아닙니다. '{last_date_in_file.strftime('%Y-%m-%d')}' 이후 데이터를 업데이트합니다..."
         start_for_update = (last_date_in_file + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         try:
+            # .reset_index()를 추가하여 'Date'를 인덱스에서 컬럼으로 변환
             new_data = ticker.history(start=start_for_update, end=today, interval="1d").reset_index()
             if not new_data.empty:
                 new_data['Date'] = pd.to_datetime(new_data['Date']).dt.tz_localize(None)
                 updated_df = pd.concat([existing_df, new_data]).drop_duplicates(subset=['Date'], keep='last')
+                
+                # CSV 저장 시 불필요한 인덱스 컬럼이 생기지 않도록 index=False 추가
                 updated_df.to_csv(filename, index=False)
                 return updated_df, f"{status_message}\n\nKOSPI 데이터 업데이트 완료!"
             else:
@@ -78,6 +81,7 @@ def process_kospi_for_chart(daily_df):
     if daily_df is None:
         return None
     kospi_monthly = daily_df.copy()
+    # 'Date' 컬럼이 존재함을 보장받으므로 에러 없이 실행됨
     kospi_monthly['Date'] = pd.to_datetime(kospi_monthly['Date'])
     kospi_monthly = kospi_monthly.set_index('Date').resample('M').last().reset_index()
     kospi_monthly['year_month'] = pd.to_datetime(kospi_monthly['Date'])
