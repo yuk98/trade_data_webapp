@@ -9,20 +9,23 @@ import data_handler
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
 
-# --- URL 파라미터 처리 ---
-params = st.query_params
-if "toggle_12m" in params:
-    st.session_state.is_12m_trailing = params.get("toggle_12m") == "True"
-    st.rerun()
-if "toggle_yoy" in params:
-    st.session_state.show_yoy_growth = params.get("toggle_yoy") == "True"
-    st.rerun()
+# --- 커스텀 CSS ---
+st.markdown("""
+<style>
+    body { font-family: 'Pretendard', sans-serif; }
+    /* 컨트롤 패널과 메트릭 카드 스타일은 유지 */
+    .control-panel { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border: 1px solid #e9ecef; margin-top: 20px; margin-bottom: 20px; }
+    .metric-card { background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 10px; padding: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.04); height: 100%; }
+    .metric-card h3 { font-size: 1.1rem; color: #495057; margin-bottom: 5px; }
+    .metric-card p { font-size: 1.5rem; font-weight: 600; color: #212529; }
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- 데이터 로드 및 유효성 검사 ---
 trade_data_processed = data_handler.load_trade_data()
 daily_kospi_data, kospi_status_msg = data_handler.get_and_update_kospi_data()
 
-# [수정] 메시지가 있을 경우(오류/경고)에만 표시
 if kospi_status_msg:
     st.warning(kospi_status_msg)
 
@@ -53,9 +56,7 @@ trade_filtered_df = trade_data_processed[
     (trade_data_processed['Date'] >= st.session_state.start_date) &
     (trade_data_processed['Date'] <= st.session_state.end_date)
 ].copy()
-# [수정] 무역 데이터의 'Date'를 월말 기준으로 통일
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
-
 display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left')
 
 # --- 메트릭 카드 UI ---
@@ -121,31 +122,50 @@ if not display_df.empty:
     final_combined_chart = alt.vconcat(kospi_chart, trade_chart, spacing=5).resolve_legend(color="independent").configure_view(strokeWidth=0).configure_title(fontSize=16, anchor="start", subtitleFontSize=12)
     st.altair_chart(final_combined_chart, use_container_width=True)
 
-# --- 컨트롤 패널 UI ---
+# --- [수정] 컨트롤 패널 UI ---
 st.markdown("---")
 st.markdown("##### ⚙️ 데이터 보기 옵션")
+
+# st.radio를 사용하여 안정적인 토글 구현
 control_cols = st.columns(3)
 with control_cols[0]:
-    new_country = st.selectbox('**국가 선택**', options=['총합', '미국', '중국'], index=['총합', '미국', '중국'].index(st.session_state.selected_country), key='country_select_bottom')
-    if new_country != st.session_state.selected_country:
-        st.session_state.selected_country = new_country
+    # 국가 선택
+    selected_country = st.selectbox(
+        '**국가 선택**',
+        options=['총합', '미국', '중국'],
+        index=['총합', '미국', '중국'].index(st.session_state.selected_country)
+    )
+    if selected_country != st.session_state.selected_country:
+        st.session_state.selected_country = selected_country
         st.rerun()
+
 with control_cols[1]:
-    st.markdown('**데이터 형태 (무역)**')
-    is_12m = st.session_state.is_12m_trailing
-    toggle_12m_html = f"""<div class="toggle-container">
-        <a href="?toggle_12m=False" target="_self"><div class="toggle-option {'active' if not is_12m else ''}">월별</div></a>
-        <a href="?toggle_12m=True" target="_self"><div class="toggle-option {'active' if is_12m else ''}">12개월 누적</div></a>
-    </div>"""
-    st.markdown(toggle_12m_html, unsafe_allow_html=True)
+    # 데이터 형태 선택
+    options_12m = ['월별', '12개월 누적']
+    selected_12m = st.radio(
+        '**데이터 형태 (무역)**',
+        options_12m,
+        index=1 if st.session_state.is_12m_trailing else 0,
+        horizontal=True,
+    )
+    new_is_12m_trailing = (selected_12m == '12개월 누적')
+    if new_is_12m_trailing != st.session_state.is_12m_trailing:
+        st.session_state.is_12m_trailing = new_is_12m_trailing
+        st.rerun()
+
 with control_cols[2]:
-    st.markdown('**표시 단위 (무역)**')
-    is_yoy = st.session_state.show_yoy_growth
-    toggle_yoy_html = f"""<div class="toggle-container">
-        <a href="?toggle_yoy=False" target="_self"><div class="toggle-option {'active' if not is_yoy else ''}">금액</div></a>
-        <a href="?toggle_yoy=True" target="_self"><div class="toggle-option {'active' if is_yoy else ''}">YoY</div></a>
-    </div>"""
-    st.markdown(toggle_yoy_html, unsafe_allow_html=True)
+    # 표시 단위 선택
+    options_yoy = ['금액', 'YoY']
+    selected_yoy = st.radio(
+        '**표시 단위 (무역)**',
+        options_yoy,
+        index=1 if st.session_state.show_yoy_growth else 0,
+        horizontal=True
+    )
+    new_show_yoy_growth = (selected_yoy == 'YoY')
+    if new_show_yoy_growth != st.session_state.show_yoy_growth:
+        st.session_state.show_yoy_growth = new_show_yoy_growth
+        st.rerun()
 
 # --- 기간 선택 UI ---
 st.markdown("---")
