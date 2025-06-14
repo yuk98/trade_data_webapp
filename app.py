@@ -41,7 +41,6 @@ if 'init_done' not in st.session_state:
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
 
 # --- 데이터 필터링 및 통합 ---
-# [수정] 기간 필터링 로직 제거. 이제 탐색기 차트로 제어하므로 항상 전체 데이터를 사용.
 trade_filtered_df = trade_data_processed[
     (trade_data_processed['country_name'] == st.session_state.selected_country)
 ].copy()
@@ -114,6 +113,7 @@ if not display_df.empty:
         ]
     ).add_params(nearest_selection)
 
+    # KOSPI 차트의 X축은 이제 브러시에 의해 제어됩니다.
     kospi_line = alt.Chart(display_df.dropna(subset=['kospi_price'])).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=None),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
@@ -122,14 +122,11 @@ if not display_df.empty:
     kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(y='kospi_price:Q').transform_filter(nearest_selection)
 
-    # [수정] 메인 KOSPI 차트는 브러시 영역에 따라 필터링됨
     kospi_chart = alt.layer(
         kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer
     ).properties(
         height=120,
         title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
-    ).transform_filter(
-        brush
     )
 
     trade_melted_df = display_df.dropna(subset=cols_to_use).melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
@@ -167,7 +164,6 @@ if not display_df.empty:
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
 
-    # [수정] 메인 무역 차트도 브러시 영역에 따라 필터링됨
     trade_chart = alt.layer(
         trade_line, trade_area, trade_rule, trade_points, tooltip_layer
     ).properties(
@@ -175,23 +171,36 @@ if not display_df.empty:
         title=alt.TitleParams(text=f"{st.session_state.selected_country} 무역 데이터", anchor="start", fontSize=16)
     ).resolve_scale(
         y='independent'
+    )
+
+    # [수정] 전체 차트 구조 변경: 메인차트 + 탐색기 차트
+    # 메인 차트들은 브러시 영역에 따라 필터링됩니다.
+    main_charts = alt.vconcat(
+        kospi_chart, trade_chart, spacing=15
     ).transform_filter(
         brush
     )
 
     # [수정] 기간 선택을 제어하는 '탐색기' 차트 생성
-    overview_chart = alt.Chart(display_df.dropna(subset=['kospi_price'])).mark_line(color='gray').encode(
+    # 무역수지를 기준으로 탐색기를 만듭니다.
+    overview_chart = alt.Chart(
+        display_df.dropna(subset=[balance_col])
+    ).mark_area(
+        color='#198754',
+        opacity=0.3
+    ).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y')),
-        y=alt.Y('kospi_price:Q', title=None, axis=None)
+        y=alt.Y(f'{balance_col}:Q', title=None, axis=None)
     ).properties(
         height=70,
         title="전체 기간 탐색기"
-    ).add_params(brush)
+    ).add_params(
+        brush
+    )
 
-
-    # [수정] 메인 차트들과 탐색기 차트를 수직으로 결합
+    # [수정] 메인 차트들과 탐색기 차트를 최종 결합
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, overview_chart, spacing=15, bounds='flush'
+        main_charts, overview_chart, spacing=15, bounds='flush'
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
@@ -236,10 +245,6 @@ with st.expander("⚙️ 데이터 보기 옵션", expanded=False):
     if new_show_yoy_growth != st.session_state.show_yoy_growth:
         st.session_state.show_yoy_growth = new_show_yoy_growth
         st.rerun()
-
-# [수정] 기간 선택 버튼 UI 제거
-# st.markdown("---")
-# ...
 
 # [수정] 사용법 안내 문구 수정
 st.info("""
