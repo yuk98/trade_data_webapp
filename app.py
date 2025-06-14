@@ -121,13 +121,21 @@ if not display_df.empty:
         ]
     ).add_params(nearest_selection)
 
+    # [수정] KOSPI 차트의 Y축 스케일을 데이터에 맞게 자동 조정 (0점 미포함)
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(labels=False)),
-        y=alt.Y('kospi_price:Q', title='KOSPI 200', axis=alt.Axis(tickCount=5, grid=False)),
+        y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
-    kospi_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_rule, tooltip_layer).properties(height=120, title="KOSPI 200 지수")
+    kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
+    
+    # [추가] 마우스 위치에 해당하는 KOSPI 지수 값을 가로선으로 표시
+    kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(
+        y='kospi_price:Q'
+    ).transform_filter(nearest_selection)
+    
+    # [수정] 차트 레이어에 가로선(kospi_horizontal_rule) 추가
+    kospi_chart = alt.layer(kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer).properties(height=120, title="KOSPI 200 지수")
 
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
@@ -175,7 +183,6 @@ with control_cols[2]:
 
 # --- 기간 선택 UI ---
 st.markdown("---")
-# [수정] 텍스트 변경
 st.markdown('**기간 설정**')
 period_options = {'1년': 1, '3년': 3, '5년': 5, '10년': 10, '20년': 20, '전체 기간': 99}
 period_cols = st.columns(len(period_options))
@@ -194,7 +201,6 @@ st.markdown("---")
 with st.container(border=True):
     st.subheader("데이터 출처 정보")
     st.markdown("""
-    - **무역 데이터**: `trade_data.csv` 파일에서 로드합니다.
-    - **KOSPI 200 데이터**: `yfinance` 라이브러리를 통해 **Yahoo Finance**에서 실시간으로 가져와 `kospi200.csv` 파일로 관리 및 업데이트합니다.
-    - **원본 데이터 참조**: [관세청 품목별 수출입 실적 (OpenAPI)](https://www.data.go.kr/data/15101612/openapi.do)
+    - **KOSPI 200 데이터 출처**: `yfinance` 라이브러리를 통해 **Yahoo Finance**에서 실시간으로 가져와 `kospi200.csv` 파일로 관리 및 업데이트합니다.
+    - **수출입 데이터 출처**: [관세청 품목별 수출입 실적 (OpenAPI)](https://www.data.go.kr/data/15101612/openapi.do)
     """)
