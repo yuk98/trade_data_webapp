@@ -1,4 +1,4 @@
-year_month,export_amount,import_amount,trade_balance,country_name,year_month
+Date,export_amount,import_amount,trade_balance,country_name,Date
 2000-01-31,2609787984,2217024691,392763293,미국,2000-01
 2000-01-31,1551722070,2357231460,-805509390,일본,2000-01
 2000-01-31,1235215271,1008165662,227049609,중국,2000-01
