@@ -34,7 +34,7 @@ kospi_data_processed = data_handler.process_kospi_for_chart(daily_kospi_data)
 # --- 세션 상태 초기화 ---
 if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
-    st.session_state.is_12m_trailing = True 
+    st.session_state.is_12m_trailing = True
     st.session_state.show_yoy_growth = False
     st.session_state.init_done = True
 
@@ -90,9 +90,9 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
-    
+
     nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
-    
+
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
         tooltip=[
@@ -111,28 +111,27 @@ if not display_df.empty:
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     kospi_vertical_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     kospi_horizontal_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(y='kospi_price:Q').transform_filter(nearest_selection)
-    
-    # [수정] transform_filter(zoom)을 추가하여 Y축이 동적으로 반응하도록 합니다.
+
     kospi_chart = alt.layer(
         kospi_line, kospi_points, kospi_vertical_rule, kospi_horizontal_rule, tooltip_layer
     ).transform_filter(
         zoom
     ).properties(
-        height=120, 
+        height=120,
         title=alt.TitleParams(text="KOSPI 200 지수", anchor="start", fontSize=16)
     )
 
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
     trade_melted_df['지표'] = trade_melted_df['지표'].map(col_map)
-    
-    if st.session_state.show_yoy_growth: 
+
+    if st.session_state.show_yoy_growth:
         y_title_trade, y_title_balance = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)"
-    else: 
+    else:
         y_title_trade, y_title_balance = "수출·수입 금액", "무역수지 금액"
-    if st.session_state.is_12m_trailing: 
+    if st.session_state.is_12m_trailing:
         y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
-    
+
     if st.session_state.show_yoy_growth:
         y_axis_config = alt.Axis(tickCount=5, grid=False, format='.0f')
     else:
@@ -140,24 +139,24 @@ if not display_df.empty:
         y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
-    
+
     trade_base_chart = alt.Chart(trade_melted_df)
-    
+
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
-        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), 
-        y=alt.Y('값:Q', title=y_title_trade, axis=y_axis_config), 
+        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
+        y=alt.Y('값:Q', title=y_title_trade, axis=y_axis_config),
         color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
-    
+
     trade_area = trade_base_chart.mark_area(opacity=0.5, clip=False, line={'color': '#198754'}).encode(
-        x=alt.X('Date:T'), 
-        y=alt.Y('값:Q', title=y_title_balance, axis=y_axis_config), 
+        x=alt.X('Date:T'),
+        y=alt.Y('값:Q', title=y_title_balance, axis=y_axis_config),
         color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
-    
+
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    
+
     trade_chart = alt.layer(
         trade_line, trade_area, trade_rule, trade_points, tooltip_layer
     ).properties(
@@ -179,7 +178,7 @@ if not display_df.empty:
     ).configure_view(
         strokeWidth=0
     )
-    
+
     st.altair_chart(final_combined_chart, use_container_width=True)
 
 # --- 컨트롤 패널 UI ---
@@ -207,7 +206,7 @@ with control_cols[2]:
         st.rerun()
 
 st.info("""
-**� 차트 사용법**
+**💡 차트 사용법**
 - **확대/축소 (Zoom)**: 차트 위에 마우스 커서를 놓고 **마우스 휠**을 위/아래로 움직여 보세요.
 - **이동 (Pan)**: 차트를 **클릭 후 드래그**하여 원하는 구간으로 이동할 수 있습니다.
 - **초기화**: 차트 아무 곳이나 **더블 클릭**하면 전체 기간으로 돌아갑니다.
@@ -221,4 +220,3 @@ with st.container(border=True):
     - **수출입 데이터**: `trade_data.csv` (원본: [관세청 수출입 실적](https://www.data.go.kr/data/15101211/openapi.do))
     - **KOSPI 200 데이터**: `yfinance` (원본: **Yahoo Finance**)
     """)
-�
