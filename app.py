@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -28,14 +26,18 @@ kospi_data_processed = data_handler.process_kospi_for_chart(daily_kospi_data)
 # --- 세션 상태 초기화 ---
 if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
-    st.session_state.is_12m_trailing = False
+    st.session_state.is_12m_trailing = True 
     st.session_state.show_yoy_growth = False
-    st.session_state.selected_period = '전체 기간'
-    st.session_state.start_date = trade_data_processed['Date'].min()
-    st.session_state.end_date = trade_data_processed['Date'].max()
+    st.session_state.selected_period = '10년'
+    end_date_default = trade_data_processed['Date'].max()
+    start_date_default = end_date_default - pd.DateOffset(years=10)
+    st.session_state.start_date = start_date_default
+    st.session_state.end_date = end_date_default
     st.session_state.init_done = True
 
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
+st.info("💡 **사용 팁**: 아래 차트에서 마우스를 드래그하여 특정 기간을 확대할 수 있습니다. 원래대로 돌아가려면 차트를 더블 클릭하세요.")
+
 
 # --- 데이터 필터링 및 통합 ---
 trade_filtered_df = trade_data_processed[
@@ -101,7 +103,10 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
-
+    
+    # [추가] x축 확대를 위한 interval selection ('brush') 생성
+    brush = alt.selection_interval(encodings=['x'])
+    
     nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
 
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
@@ -116,7 +121,8 @@ if not display_df.empty:
     ).add_params(nearest_selection)
 
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
-        x=alt.X('Date:T', title=None, axis=alt.Axis(labels=False)),
+        # [수정] x축의 scale domain을 brush와 연결
+        x=alt.X('Date:T', title=None, axis=alt.Axis(labels=False, grid=True), scale=alt.Scale(domain=brush)),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
     )
     kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
@@ -139,13 +145,29 @@ if not display_df.empty:
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
     trade_base_chart = alt.Chart(trade_melted_df)
     
-    # [수정] clip 파라미터를 False로 변경하여 차트가 잘리는 현상 방지
-    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5, grid=False)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
-    trade_bar = trade_base_chart.mark_bar(opacity=0.7, clip=False).encode(x=alt.X('Date:T'), y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5, grid=False)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
+    # [수정] x축의 scale domain을 brush와 연결
+    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
+        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45), scale=alt.Scale(domain=brush)), 
+        y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5, grid=False)), 
+        color=color_scheme,
+    ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+    
+    # [수정] x축의 scale domain을 brush와 연결
+    trade_bar = trade_base_chart.mark_bar(size=8, opacity=0.5, clip=False).encode(
+        x=alt.X('Date:T', scale=alt.Scale(domain=brush)), 
+        y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5, grid=False)), 
+        color=color_scheme,
+    ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
     
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    trade_chart = alt.layer(trade_line, trade_bar, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
+    
+    # [수정] 하단 차트에 brush 파라미터를 추가하여 인터랙션 활성화
+    trade_chart = alt.layer(
+        trade_line, trade_bar, trade_rule, trade_points, tooltip_layer
+    ).resolve_scale(y='independent').properties(
+        height=350, title=f"{st.session_state.selected_country} 무역 데이터"
+    ).add_params(brush)
 
     final_combined_chart = alt.vconcat(kospi_chart, trade_chart, spacing=5).resolve_legend(color="independent").configure_view(strokeWidth=0).configure_title(fontSize=16, anchor="start", subtitleFontSize=12)
     st.altair_chart(final_combined_chart, use_container_width=True)
