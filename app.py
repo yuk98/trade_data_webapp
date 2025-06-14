@@ -104,7 +104,6 @@ if not display_df.empty:
         ]
     ).add_params(nearest_selection)
 
-    # [수정] 위쪽 차트의 X축을 숨겨서 깔끔하게 만듭니다. (axis=None)
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=None),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
@@ -150,7 +149,7 @@ if not display_df.empty:
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
     trade_chart = alt.layer(trade_line, trade_area, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
 
-    # [수정] resolve_scale(x='shared')를 추가하여 두 차트의 X축을 완벽하게 동기화합니다.
+    # [수정] Y축이 겹치지 않도록 resolve_scale에 y='independent'를 추가합니다.
     final_combined_chart = alt.vconcat(
         kospi_chart, trade_chart, spacing=5, bounds='flush'
     ).add_params(
@@ -158,7 +157,8 @@ if not display_df.empty:
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
-        x='shared'
+        x='shared',
+        y='independent' # 이 부분을 추가하여 Y축을 독립적으로 처리하도록 설정
     ).configure_view(
         strokeWidth=0
     ).configure_title(
