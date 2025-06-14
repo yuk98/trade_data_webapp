@@ -78,8 +78,8 @@ with st.container(border=True):
 
 # --- 데이터 필터링 및 통합 ---
 trade_filtered_df = trade_data_processed[
-    (trade_data_processed['country_name'] == st.session_state.selected_country) & 
-    (trade_data_processed['Date'] >= st.session_state.start_date) & 
+    (trade_data_processed['country_name'] == st.session_state.selected_country) &
+    (trade_data_processed['Date'] >= st.session_state.start_date) &
     (trade_data_processed['Date'] <= st.session_state.end_date)
 ].copy()
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']).dt.to_period('M').dt.to_timestamp('S')
@@ -98,7 +98,6 @@ if not display_df.empty:
 
     nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
 
-    # 통합 툴팁 레이어 생성
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
         tooltip=[
@@ -110,22 +109,17 @@ if not display_df.empty:
         ]
     ).add_params(nearest_selection)
 
-    # KOSPI 200 차트 생성
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(labels=False)),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', axis=alt.Axis(tickCount=4)),
     )
-    kospi_points = kospi_line.mark_circle(size=35).encode(
-        opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0))
-    )
-    kospi_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(
-        x='Date:T'
-    ).transform_filter(nearest_selection)
+    kospi_points = kospi_line.mark_circle(size=35).encode(opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
+    kospi_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
+    
     kospi_chart = alt.layer(
         kospi_line, kospi_points, kospi_rule, tooltip_layer
     ).properties(height=100, title="KOSPI 200 지수")
 
-    # 무역 데이터 차트 생성
     trade_melted_df = display_df.melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
     trade_melted_df['지표'] = trade_melted_df['지표'].map(col_map)
@@ -146,7 +140,6 @@ if not display_df.empty:
         trade_line, trade_bar, trade_rule, trade_points, tooltip_layer
     ).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
 
-    # [수정된 부분] 완성된 두 차트를 vconcat으로 최종 결합
     final_combined_chart = alt.vconcat(
         kospi_chart,
         trade_chart,
@@ -154,7 +147,7 @@ if not display_df.empty:
     ).resolve_legend(
         color="independent"
     ).configure_view(
-        strokeWidth=0 # 차트 간 경계선 제거
+        strokeWidth=0
     ).configure_title(
         fontSize=16, anchor="start", subtitleFontSize=12
     )
@@ -169,11 +162,11 @@ period_cols = st.columns(len(period_options))
 for i, (label, offset_years) in enumerate(period_options.items()):
     btn_type = "primary" if st.session_state.selected_period == label else "secondary"
     if period_cols[i].button(label, key=f'period_{label}', use_container_width=True, type=btn_type):
-        st.session_state.selected_period = label
         end_date = trade_data_processed['Date'].max()
         if label == '전체 기간': start_date = trade_data_processed['Date'].min()
         else: start_date = end_date - pd.DateOffset(years=offset_years)
         st.session_state.start_date, st.session_state.end_date = start_date, end_date
+        st.session_state.selected_period = label
         st.rerun()
 
 st.markdown("---")
