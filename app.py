@@ -21,7 +21,7 @@ class Dashboard:
     """
 
     def __init__(self):
-        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="📈")
+        st.set_page_config(layout="wide", page_title="무역 & KOSPI 대시보드", page_icon="�")
         if 'init_done' not in st.session_state:
             self._initialize_session_state()
 
@@ -81,7 +81,7 @@ class Dashboard:
                     """, unsafe_allow_html=True)
 
     def _render_charts(self, df: pd.DataFrame):
-        """안정화된 로직으로 Altair 차트를 생성하고 렌더링합니다."""
+        """상호작용 기능이 복원된 Altair 차트를 생성하고 렌더링합니다."""
         nearest = alt.selection_point(encodings=['x'], nearest=True, empty=False)
         
         base_cols = ['export_amount', 'import_amount', 'trade_balance']
@@ -92,49 +92,67 @@ class Dashboard:
 
         base_chart = alt.Chart(df).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)))
         
-        tooltip_layer = alt.Chart(df).mark_rule(color='gray').encode(
-            x='Date:T',
-            opacity=alt.condition(nearest, alt.value(0.3), alt.value(0)),
-            tooltip=[
-                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
-                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
-                alt.Tooltip(export_col, title="수출", format=',.2f'),
-                alt.Tooltip(import_col, title="수입", format=',.2f'),
-                alt.Tooltip(balance_col, title="무역수지", format=',.2f'),
-            ]
+        vertical_rule = base_chart.mark_rule(color='gray', strokeDash=[3,3]).encode(
+            x='Date:T'
+        ).transform_filter(nearest)
+
+        kospi_horizontal_rule = base_chart.mark_rule(color=KOSPI_COLOR, strokeDash=[3,3]).encode(
+            y=alt.Y('kospi_price:Q')
+        ).transform_filter(nearest)
+
+        tooltip_provider = base_chart.mark_rect(color='transparent').encode(
+            x='Date:T'
         ).add_params(nearest)
 
-        # [수정] Y축이 잘리지 않도록 scale=alt.Scale(zero=False) 추가
-        kospi_chart = base_chart.mark_line(color=KOSPI_COLOR).encode(
+        kospi_chart_base = base_chart.mark_line(color=KOSPI_COLOR).encode(
             x=alt.X('Date:T', title=None, axis=None),
             y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=4, grid=False))
-        ).properties(height=150, title=alt.TitleParams("KOSPI 200 지수", anchor='start', fontSize=16))
+        )
+        kospi_points = kospi_chart_base.mark_circle(size=60).encode(
+            opacity=alt.condition(nearest, alt.value(1), alt.value(0))
+        )
+        kospi_chart = alt.layer(kospi_chart_base, kospi_points, kospi_horizontal_rule).properties(
+            height=150, title=alt.TitleParams("KOSPI 200 지수", anchor='start', fontSize=16)
+        )
         
         trade_df = df.dropna(subset=cols_to_use).melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
         col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
         trade_df['지표'] = trade_df['지표'].map(col_map)
         
         y_axis_format = "format(datum.value / 1e9, '.0f') + 'B'" if not growth else '.0f'
-        trade_base = alt.Chart(trade_df).encode(
+        trade_base_chart = alt.Chart(trade_df).encode(
             x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
             color=alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=[PRIMARY_COLOR, SECONDARY_COLOR, TERTIARY_COLOR]), legend=alt.Legend(title="구분", orient='top-left'))
         )
         
-        # [수정] Y축이 잘리지 않도록 scale=alt.Scale(zero=False) 추가
-        line_chart = trade_base.transform_filter(alt.datum.지표 != '무역수지').mark_line(strokeWidth=2.5).encode(
+        line_chart = trade_base_chart.transform_filter(alt.datum.지표 != '무역수지').mark_line(strokeWidth=2.5).encode(
             y=alt.Y('값:Q', title="금액 (수출입)", scale=alt.Scale(zero=False), axis=alt.Axis(labelExpr=y_axis_format))
         )
-        area_chart = trade_base.transform_filter(alt.datum.지표 == '무역수지').mark_area(opacity=0.4, line={'color': TERTIARY_COLOR}).encode(
+        area_chart = trade_base_chart.transform_filter(alt.datum.지표 == '무역수지').mark_area(opacity=0.4, line={'color': TERTIARY_COLOR}).encode(
             y=alt.Y('값:Q', title="금액 (무역수지)", scale=alt.Scale(zero=False), axis=alt.Axis(labelExpr=y_axis_format))
         )
+        trade_points = trade_base_chart.mark_circle(size=60).encode(
+            y='값:Q',
+            opacity=alt.condition(nearest, alt.value(1), alt.value(0))
+        )
         
-        trade_chart = alt.layer(line_chart, area_chart).resolve_scale(y='independent').properties(height=350, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16))
+        trade_chart = alt.layer(line_chart, area_chart, trade_points).resolve_scale(y='independent').properties(
+            height=350, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
+        )
 
         final_chart = alt.vconcat(
-            alt.layer(kospi_chart, tooltip_layer).resolve_scale(y='independent'),
-            alt.layer(trade_chart, tooltip_layer).resolve_scale(y='independent'),
+            alt.layer(kospi_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
+            alt.layer(trade_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
             spacing=30, bounds='flush'
-        ).resolve_legend(color="independent").configure_view(stroke=None)
+        ).resolve_legend(color="independent").configure_view(stroke=None).encode(
+            tooltip=[
+                alt.Tooltip('Date:T', title='날짜', format='%Y-%m'),
+                alt.Tooltip('kospi_price:Q', title='KOSPI 200', format=',.2f'),
+                alt.Tooltip(export_col, title="수출", format='$,.2f'),
+                alt.Tooltip(import_col, title="수입", format='$,.2f'),
+                alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
+            ]
+        )
 
         st.altair_chart(final_chart, use_container_width=True)
 
@@ -187,22 +205,26 @@ class Dashboard:
             st.error("데이터 로딩에 실패했습니다. 파일을 확인하거나 인터넷 연결을 점검해주세요.")
             if kospi_msg: st.warning(kospi_msg)
             return
-            
-        full_display_df = pd.merge(trade_data, kospi_data, on='Date', how='outer').sort_values(by='Date')
-        min_date, max_date = full_display_df['Date'].min(), full_display_df['Date'].max()
 
-        if 'start_date_input' not in st.session_state:
-            st.session_state.start_date_input = (max_date - pd.DateOffset(years=10)).date()
-        if 'end_date_input' not in st.session_state:
-            st.session_state.end_date_input = max_date.date()
+        self._render_controls(trade_data['Date'].min(), kospi_data['Date'].max())
 
-        # [수정] 컨트롤을 먼저 렌더링하여 사용자 입력이 즉시 반영되도록 합니다.
-        self._render_controls(min_date, max_date)
+        # [수정] 데이터 병합 로직을 개선하여 KOSPI 데이터가 유실되지 않도록 합니다.
+        # 1. 먼저 국가별로 무역 데이터를 필터링합니다.
+        trade_country_filtered = trade_data[trade_data['country_name'] == st.session_state.selected_country].copy()
         
-        country_df = full_display_df[full_display_df['country_name'] == st.session_state.selected_country].copy()
-        display_df_filtered = country_df[
-            (country_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
-            (country_df['Date'] <= pd.to_datetime(st.session_state.end_date_input))
+        # 2. 필터링된 무역 데이터와 전체 KOSPI 데이터를 병합합니다.
+        full_display_df = pd.merge(trade_country_filtered, kospi_data, on='Date', how='outer').sort_values(by='Date')
+        
+        # 날짜 세션 상태 초기화
+        if 'start_date_input' not in st.session_state:
+            st.session_state.start_date_input = (full_display_df['Date'].max() - pd.DateOffset(years=10)).date()
+        if 'end_date_input' not in st.session_state:
+            st.session_state.end_date_input = full_display_df['Date'].max().date()
+
+        # 최종적으로 날짜 범위에 따라 필터링합니다.
+        display_df_filtered = full_display_df[
+            (full_display_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
+            (full_display_df['Date'] <= pd.to_datetime(st.session_state.end_date_input))
         ]
         
         self._render_header_and_metrics(display_df_filtered)
@@ -228,3 +250,4 @@ class Dashboard:
 if __name__ == "__main__":
     app = Dashboard()
     app.run()
+�
