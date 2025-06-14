@@ -100,7 +100,6 @@ class Dashboard:
             y=alt.Y('kospi_price:Q')
         ).transform_filter(nearest)
 
-        # [수정] 툴팁 정의를 툴팁 공급자 차트에 직접 적용합니다.
         tooltip_provider = base_chart.mark_rect(color='transparent').encode(
             x='Date:T',
             tooltip=[
