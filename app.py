@@ -38,7 +38,7 @@ if 'init_done' not in st.session_state:
     st.session_state.show_yoy_growth = False
     st.session_state.init_done = True
 
-st.title('📈 무역 데이터 & KOSPI 200 대시보드')
+st.title('� 무역 데이터 & KOSPI 200 대시보드')
 
 # --- 데이터 필터링 및 통합 ---
 trade_filtered_df = trade_data_processed[
