@@ -127,11 +127,16 @@ if not display_df.empty:
     if st.session_state.show_yoy_growth:
         y_axis_config = alt.Axis(tickCount=5, grid=False, format='.0f')
     else:
-        label_expr = "format(datum.value / 1000000000, '.1f') + 'B'"
+        # [수정] Y축 레이블을 정수로 표시 ('.0f')
+        label_expr = "format(datum.value / 1000000000, '.0f') + 'B'"
         y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
-    trade_base_chart = alt.Chart(trade_melted_df)
+    
+    # [수정] 제목이 움직이지 않도록 .properties()를 사용하여 기본 차트에 제목을 설정
+    trade_base_chart = alt.Chart(trade_melted_df).properties(
+        title=alt.TitleParams(text=f"{st.session_state.selected_country} 무역 데이터", anchor='start')
+    )
     
     trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), 
@@ -147,22 +152,32 @@ if not display_df.empty:
     
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    trade_chart = alt.layer(trade_line, trade_area, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
+    
+    # [수정] 제목 설정을 trade_base_chart로 옮겼으므로 여기서는 properties에서 title 제거
+    trade_chart = alt.layer(
+        trade_line, trade_area, trade_rule, trade_points, tooltip_layer
+    ).resolve_scale(
+        y='independent'
+    ).properties(
+        height=350
+    )
 
-    # [수정] Y축이 겹치지 않도록 resolve_scale에 y='independent'를 추가합니다.
+    # [수정] 차트 간 간격을 늘려 겹침 문제 해결 (spacing=30)
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, spacing=5, bounds='flush'
+        kospi_chart, trade_chart, spacing=30, bounds='flush'
     ).add_params(
         zoom
     ).resolve_legend(
         color="independent"
     ).resolve_scale(
         x='shared',
-        y='independent' # 이 부분을 추가하여 Y축을 독립적으로 처리하도록 설정
+        y='independent'
     ).configure_view(
         strokeWidth=0
     ).configure_title(
-        fontSize=16, anchor="start", subtitleFontSize=12
+        fontSize=16, 
+        anchor="start",
+        subtitleFontSize=12
     )
     
     st.altair_chart(final_combined_chart, use_container_width=True)
