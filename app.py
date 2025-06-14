@@ -28,35 +28,26 @@ if 'init_done' not in st.session_state:
     st.session_state.selected_country = '총합'
     st.session_state.is_12m_trailing = True 
     st.session_state.show_yoy_growth = False
-    # [제거] 기간 버튼이 사라지므로 관련 세션 상태는 더 이상 필요 없음
     st.session_state.init_done = True
 
 st.title('📈 무역 데이터 & KOSPI 200 대시보드')
 
 # --- 데이터 필터링 및 통합 ---
-# [수정] 기간 필터링 로직 제거. 이제 차트에서 직접 제어하므로 항상 전체 데이터를 사용.
 trade_filtered_df = trade_data_processed[
     (trade_data_processed['country_name'] == st.session_state.selected_country)
 ].copy()
 trade_filtered_df['Date'] = pd.to_datetime(trade_filtered_df['Date']) + pd.offsets.MonthEnd(0)
 display_df = pd.merge(trade_filtered_df, kospi_data_processed, on='Date', how='left')
 
-# --- 메트릭 카드 UI (가장 최근 데이터 기준이므로 유지) ---
+# --- 메트릭 카드 UI ---
 if not display_df.empty:
     latest_date = display_df['Date'].max()
     prev_month_date = latest_date - pd.DateOffset(months=1)
     prev_year_date = latest_date - pd.DateOffset(years=1)
-
     latest_data = display_df[display_df['Date'] == latest_date]
     prev_month_data = display_df[display_df['Date'] == prev_month_date]
     prev_year_data = display_df[display_df['Date'] == prev_year_date]
-
-    metrics_to_show = {
-        '수출액': 'export_amount',
-        '수입액': 'import_amount',
-        '무역수지': 'trade_balance'
-    }
-
+    metrics_to_show = {'수출액': 'export_amount', '수입액': 'import_amount', '무역수지': 'trade_balance'}
     cols = st.columns(3)
     for i, (metric_label, col_name) in enumerate(metrics_to_show.items()):
         with cols[i]:
@@ -72,7 +63,6 @@ if not display_df.empty:
                 if prev_year_value is not None and prev_year_value != 0:
                     yoy_pct = ((current_value - prev_year_value) / abs(prev_year_value)) * 100
                     yoy_delta_str = f"{yoy_pct:+.1f}%"
-
                 st.metric(label=f"{latest_date.strftime('%Y년 %m월')} {metric_label}", value=f"${current_value/1e9:.2f}B")
                 st.markdown(f"""
                 <div style="font-size: 0.8rem; text-align: right; color: #555;">
@@ -83,9 +73,7 @@ if not display_df.empty:
 
 # --- 차트 생성 ---
 if not display_df.empty:
-    # [수정] 마우스 휠(zoom), 드래그(pan)를 위한 selection_interval 추가
     zoom = alt.selection_interval(bind='scales', encodings=['x'])
-
     base_col_names = ['export_amount', 'import_amount', 'trade_balance']
     if st.session_state.is_12m_trailing:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_trailing_12m_yoy_growth' for c in base_col_names]
@@ -94,9 +82,7 @@ if not display_df.empty:
         if st.session_state.show_yoy_growth: cols_to_use = [f'{c}_yoy_growth' for c in base_col_names]
         else: cols_to_use = base_col_names
     export_col, import_col, balance_col = cols_to_use
-
     nearest_selection = alt.selection_point(nearest=True, on='mouseover', fields=['Date'], empty=False)
-
     tooltip_layer = alt.Chart(display_df).mark_rule(color='transparent').encode(
         x='Date:T',
         tooltip=[
@@ -107,7 +93,6 @@ if not display_df.empty:
             alt.Tooltip(balance_col, title=f"무역수지 ({st.session_state.selected_country})", format=f"{',' if not st.session_state.show_yoy_growth else ''}.2f")
         ]
     ).add_params(nearest_selection)
-
     kospi_line = alt.Chart(display_df).mark_line(color='#FF9900', strokeWidth=2).encode(
         x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)),
         y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=5, grid=False)),
@@ -121,32 +106,46 @@ if not display_df.empty:
     col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
     trade_melted_df['지표'] = trade_melted_df['지표'].map(col_map)
     
-    if st.session_state.show_yoy_growth: y_title_trade, y_title_balance = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)"
-    else: y_title_trade, y_title_balance = "수출·수입 금액", "무역수지 금액"
-    if st.session_state.is_12m_trailing: y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
+    if st.session_state.show_yoy_growth: 
+        y_title_trade, y_title_balance = "수출·수입 YoY 성장률 (%)", "무역수지 YoY 성장률 (%)"
+    else: 
+        y_title_trade, y_title_balance = "수출·수입 금액", "무역수지 금액"
+    if st.session_state.is_12m_trailing: 
+        y_title_trade, y_title_balance = f"12개월 누적 {y_title_trade}", f"12개월 누적 {y_title_balance}"
+    
+    # [수정 1] Y축 레이블 포맷을 조건부로 설정하는 로직 추가
+    if st.session_state.show_yoy_growth:
+        # YoY 성장률일 경우, 일반 숫자 포맷 사용
+        y_axis_config = alt.Axis(tickCount=5, grid=False, format='.0f')
+    else:
+        # 금액일 경우, 10억 단위('B')로 축약하는 labelExpr 사용
+        label_expr = "format(datum.value / 1000000000, '.1f') + 'B'"
+        y_axis_config = alt.Axis(tickCount=5, grid=False, labelExpr=label_expr)
 
     color_scheme = alt.Color('지표:N', scale=alt.Scale(domain=['수출', '수입', '무역수지'], range=['#0d6efd', '#dc3545', '#198754']), legend=alt.Legend(title="구분", orient="top-left"))
     trade_base_chart = alt.Chart(trade_melted_df)
     
-    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), y=alt.Y('값:Q', title=y_title_trade, axis=alt.Axis(tickCount=5, grid=False)), color=color_scheme,).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
+    # [수정 1] y축 설정에 위에서 정의한 y_axis_config 적용
+    trade_line = trade_base_chart.mark_line(strokeWidth=2.5, clip=False).encode(
+        x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)), 
+        y=alt.Y('값:Q', title=y_title_trade, axis=y_axis_config), 
+        color=color_scheme
+    ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['수출', '수입']))
     
-    # [수정] 무역수지 bar를 area로 변경하여 겹침 문제 해결 및 시각적 개선
-    # line 속성을 추가하여 영역의 경계선을 표시해 가독성을 높임
+    # [수정 1] y축 설정에 위에서 정의한 y_axis_config 적용
     trade_area = trade_base_chart.mark_area(opacity=0.5, clip=False, line={'color': '#198754'}).encode(
         x=alt.X('Date:T'), 
-        y=alt.Y('값:Q', title=y_title_balance, axis=alt.Axis(tickCount=5, grid=False)), 
-        color=color_scheme,
+        y=alt.Y('값:Q', title=y_title_balance, axis=y_axis_config), 
+        color=color_scheme
     ).transform_filter(alt.FieldOneOfPredicate(field='지표', oneOf=['무역수지']))
     
     trade_points = trade_base_chart.mark_circle(size=35).encode(color=color_scheme, opacity=alt.condition(nearest_selection, alt.value(1), alt.value(0)))
     trade_rule = alt.Chart(display_df).mark_rule(color='gray', strokeDash=[3,3]).encode(x='Date:T').transform_filter(nearest_selection)
-    
-    # [수정] layer에 trade_bar 대신 trade_area를 추가
     trade_chart = alt.layer(trade_line, trade_area, trade_rule, trade_points, tooltip_layer).resolve_scale(y='independent').properties(height=350, title=f"{st.session_state.selected_country} 무역 데이터")
 
-    # [수정] 최종 차트에 add_params(zoom)을 추가하여 인터랙션 활성화
+    # [수정 2] vconcat에 bounds='flush'를 추가하여 차트 정렬 문제 해결
     final_combined_chart = alt.vconcat(
-        kospi_chart, trade_chart, spacing=5
+        kospi_chart, trade_chart, spacing=5, bounds='flush'
     ).add_params(
         zoom
     ).resolve_legend(
@@ -183,18 +182,12 @@ with control_cols[2]:
         st.session_state.show_yoy_growth = new_show_yoy_growth
         st.rerun()
 
-# --- [제거] 기간 선택 UI ---
-# st.markdown("---")
-# st.markdown('**기간 설정**')
-# ... (기존 버튼 UI 전체 제거) ...
-
 st.info("""
 **💡 차트 사용법**
 - **확대/축소 (Zoom)**: 차트 위에 마우스 커서를 놓고 **마우스 휠**을 위/아래로 움직여 보세요.
 - **이동 (Pan)**: 차트를 **클릭 후 드래그**하여 원하는 구간으로 이동할 수 있습니다.
 - **초기화**: 차트 아무 곳이나 **더블 클릭**하면 전체 기간으로 돌아갑니다.
 """)
-
 
 # --- 데이터 출처 정보 ---
 st.markdown("---")
