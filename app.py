@@ -82,6 +82,7 @@ class Dashboard:
 
     def _render_charts(self, df: pd.DataFrame):
         """상호작용 기능이 포함된 Altair 차트를 생성하고 렌더링합니다."""
+        # [수정] 마우스 오버 시 상호작용이 즉시 일어나도록 on='mouseover'를 명시합니다.
         nearest = alt.selection_point(on='mouseover', encodings=['x'], nearest=True, empty=False)
         
         base_cols = ['export_amount', 'import_amount', 'trade_balance']
@@ -90,16 +91,19 @@ class Dashboard:
         cols_to_use = [f"{col}{trailing}{growth}" for col in base_cols]
         export_col, import_col, balance_col = cols_to_use
 
-        base_chart = alt.Chart(df).encode(x=alt.X('Date:T', title=None, axis=alt.Axis(format='%Y-%m', labelAngle=-45)))
+        # [수정] 인코딩 충돌을 피하기 위해 인코딩 없는 베이스 차트를 정의합니다.
+        base_chart = alt.Chart(df)
         
-        vertical_rule = base_chart.mark_rule(color='gray', strokeDash=[3,3]).encode(
+        # [수정] 상호작용 레이어를 명확하게 정의합니다.
+        vertical_rule = alt.Chart(df).mark_rule(color='gray', strokeDash=[3,3]).encode(
             x='Date:T'
         ).transform_filter(nearest)
 
-        kospi_horizontal_rule = base_chart.mark_rule(color=KOSPI_COLOR, strokeDash=[3,3]).encode(
+        kospi_horizontal_rule = alt.Chart(df).mark_rule(color=KOSPI_COLOR, strokeDash=[3,3]).encode(
             y=alt.Y('kospi_price:Q')
         ).transform_filter(nearest)
-
+        
+        # 툴팁을 제공하는 투명한 레이어
         tooltip_provider = base_chart.mark_rect(color='transparent').encode(
             x='Date:T',
             tooltip=[
@@ -110,7 +114,8 @@ class Dashboard:
                 alt.Tooltip(balance_col, title="무역수지", format='$,.2f'),
             ]
         ).add_params(nearest)
-
+        
+        # KOSPI 차트
         kospi_chart_base = base_chart.mark_line(color=KOSPI_COLOR).encode(
             x=alt.X('Date:T', title=None, axis=None),
             y=alt.Y('kospi_price:Q', title='KOSPI 200', scale=alt.Scale(zero=False), axis=alt.Axis(tickCount=4, grid=False))
@@ -119,9 +124,10 @@ class Dashboard:
             opacity=alt.condition(nearest, alt.value(1), alt.value(0))
         )
         kospi_chart = alt.layer(kospi_chart_base, kospi_points, kospi_horizontal_rule).properties(
-            height=150, title=alt.TitleParams("KOSPI 200 지수", anchor='start', fontSize=16)
+            height=120, title=alt.TitleParams("KOSPI 200 지수", anchor='start', fontSize=16)
         )
         
+        # 무역 차트
         trade_df = df.dropna(subset=cols_to_use).melt(id_vars=['Date'], value_vars=cols_to_use, var_name='지표', value_name='값')
         col_map = {export_col: '수출', import_col: '수입', balance_col: '무역수지'}
         trade_df['지표'] = trade_df['지표'].map(col_map)
@@ -144,13 +150,13 @@ class Dashboard:
         )
         
         trade_chart = alt.layer(line_chart, area_chart, trade_points).resolve_scale(y='independent').properties(
-            height=350, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
+            height=300, title=alt.TitleParams(f"{st.session_state.selected_country} 무역 데이터", anchor='start', fontSize=16)
         )
 
-        # [수정] vconcat 객체에 encode()를 호출하던 오류를 수정했습니다.
+        # 최종 차트 결합
         final_chart = alt.vconcat(
-            alt.layer(kospi_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
-            alt.layer(trade_chart, vertical_rule, tooltip_provider).resolve_scale(y='independent'),
+            alt.layer(kospi_chart, vertical_rule, tooltip_provider),
+            alt.layer(trade_chart, vertical_rule, tooltip_provider),
             spacing=30, bounds='flush'
         ).resolve_legend(color="independent").configure_view(stroke=None)
 
@@ -179,10 +185,11 @@ class Dashboard:
                         pass
 
             date_cols = st.columns(2)
+            # 사용자가 날짜를 직접 바꾸면, 기간 버튼 선택 상태는 해제됩니다.
             date_cols[0].date_input("시작일", key="start_date_input", on_change=lambda: st.session_state.update(selected_period=None))
             date_cols[1].date_input("종료일", key="end_date_input", on_change=lambda: st.session_state.update(selected_period=None))
     
-    def set_period(self, label, years, min_date, max_date):
+    def set_period(self, label: str, years: int, min_date: datetime, max_date: datetime):
         """기간 버튼 클릭 시 세션 상태를 업데이트하는 콜백 함수."""
         st.session_state.selected_period = label
         st.session_state.end_date_input = max_date.date()
@@ -205,20 +212,21 @@ class Dashboard:
             st.error("데이터 로딩에 실패했습니다. 파일을 확인하거나 인터넷 연결을 점검해주세요.")
             if kospi_msg: st.warning(kospi_msg)
             return
-        
-        min_date_for_controls = trade_data['Date'].min()
-        max_date_for_controls = kospi_data['Date'].max()
-        self._render_controls(min_date_for_controls, max_date_for_controls)
 
+        # [수정] 컨트롤을 먼저 렌더링하여 사용자 입력이 즉시 반영되도록 합니다.
+        self._render_controls(trade_data['Date'].min(), kospi_data['Date'].max())
+
+        # [수정] 컨트롤 패널에서 확정된 상태값으로 데이터를 필터링합니다.
         trade_country_filtered = trade_data[trade_data['country_name'] == st.session_state.selected_country].copy()
         
         full_display_df = pd.merge(trade_country_filtered, kospi_data, on='Date', how='outer').sort_values(by='Date')
         
+        # 날짜 세션 상태가 없으면 10년으로 초기화합니다.
         if 'start_date_input' not in st.session_state:
-            st.session_state.start_date_input = (max_date_for_controls - pd.DateOffset(years=10)).date()
+            st.session_state.start_date_input = (kospi_data['Date'].max() - pd.DateOffset(years=10)).date()
         if 'end_date_input' not in st.session_state:
-            st.session_state.end_date_input = max_date_for_controls.date()
-        
+            st.session_state.end_date_input = kospi_data['Date'].max().date()
+
         display_df_filtered = full_display_df[
             (full_display_df['Date'] >= pd.to_datetime(st.session_state.start_date_input)) & 
             (full_display_df['Date'] <= pd.to_datetime(st.session_state.end_date_input))
